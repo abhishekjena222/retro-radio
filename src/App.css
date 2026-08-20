@@ -2416,3 +2416,153 @@ select {
 
   border-color: var(--accent);
 }
+
+
+
+/* =========================================================
+   Health station
+   ========================================================= */
+
+.station-health {
+  display: inline-block;
+  margin-right: 7px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.station-health.healthy {
+  color: #22c55e;
+  text-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+
+.station-health.unhealthy {
+  color: #ef4444;
+  text-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+}
+
+.station-health.unknown {
+  color: #777;
+}
+
+
+/* =========================================================
+   REGION SELECTOR
+   ========================================================= */
+
+.region-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+}
+
+.region-selector > span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.region-selector select {
+  min-width: 150px;
+  max-width: 220px;
+  height: 34px;
+  padding: 0 32px 0 10px;
+
+  border: 1px solid var(--radio-border);
+  border-radius: 4px;
+
+  background: var(--radio-bg);
+  color: var(--text);
+
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+
+  cursor: pointer;
+  outline: none;
+
+  appearance: auto;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.region-selector select:hover {
+  border-color: var(--text);
+}
+
+.region-selector select:focus {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+
+.region-selector select option {
+  background: var(--radio-bg);
+  color: var(--text);
+}
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 600px) {
+  .region-selector {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 8px;
+  }
+
+  .region-selector select {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+
+
+@media (max-width: 600px) {
+  .list-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .station-filter {
+    width: 100%;
+    display: flex;
+    gap: 6px;
+  }
+
+  .station-filter button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .region-selector {
+    width: 100%;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .region-selector > span {
+    flex-shrink: 0;
+  }
+
+  .region-selector select {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: 36px;
+  }
+
+  .list-header > span {
+    margin-left: auto;
+  }
+}

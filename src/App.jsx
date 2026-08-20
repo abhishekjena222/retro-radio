@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const API =
@@ -7,49 +7,145 @@ const API =
 function App() {
   const audioRef = useRef(null);
   const scanAudioRef = useRef(null);
+
   const scanIntervalRef = useRef(null);
   const scanIndexRef = useRef(null);
   const scanDirectionRef = useRef(null);
   const scanCancelRef = useRef(false);
+
+  const lastPlaybackTimeRef = useRef(0);
+  const playbackStallTimerRef = useRef(null);
   const recoveryTimerRef = useRef(null);
   const recoveryAttemptRef = useRef(0);
+
   const failoverRef = useRef(false);
+
   const wasOfflineRef = useRef(false);
   const wasPlayingBeforeOfflineRef = useRef(false);
+
   const manuallyPausedRef = useRef(false);
+
   const tunerAnimationRef = useRef(null);
+
   const stationLoadRequestRef = useRef(0);
+
   const recoveryStationIdRef = useRef(null);
 
+  const activeStationListRef = useRef([]);
+
+  /*
+   * ---------------------------------------------------------
+   * PLAYBACK RACE PROTECTION
+   * ---------------------------------------------------------
+   *
+   * Every time we intentionally change the audio source,
+   * this number increases.
+   *
+   * If an old play() promise finishes later, we know it is
+   * obsolete and we simply ignore it.
+   */
+  const playbackRequestRef = useRef(0);
+
+  /*
+   * Station currently owned by the audio element.
+   */
+  const audioStationIdRef = useRef(null);
+
+  /*
+   * True while WE are intentionally changing/pauseing
+   * the audio element.
+   *
+   * This prevents onPause from being interpreted as a
+   * user pause during station switching/recovery.
+   */
+  const internalAudioChangeRef = useRef(false);
+
+  /*
+   * Prevent multiple recovery operations from running
+   * simultaneously.
+   */
+  const recoveryRunningRef = useRef(false);
+
+  /*
+   * Prevent duplicate error recovery calls.
+   */
+  const errorRecoveryPendingRef = useRef(false);
+
+  /*
+   * Stations already tested during the current
+   * skip/recovery cycle.
+   */
+  const failedStationsRef = useRef(new Set());
+
+  const STATION_HEALTH_CONFIG = {
+    enabled: true,
+    showUnknown: true,
+    testTimeout: 8000,
+  };
+
+  const [stationHealth, setStationHealth] = useState({});
 
   const [displayFrequency, setDisplayFrequency] = useState(98.0);
   const [stations, setStations] = useState([]);
+  const [regionStations, setRegionStations] = useState([]);
+
   const [currentStation, setCurrentStation] = useState(null);
+
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
+
   const [location, setLocation] = useState(null);
-  const [locationName, setLocationName] = useState("Unknown Location");
-  const [locationLoading, setLocationLoading] = useState(false);
-  const [searchLocation, setSearchLocation] = useState("");
-  const [searchingLocation, setSearchingLocation] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [tunerFrequency, setTunerFrequency] = useState(98.0);
-  const [scanMessage, setScanMessage] =   useState("");
+  const [locationName, setLocationName] =
+    useState("Unknown Location");
+
+  const [locationLoading, setLocationLoading] =
+    useState(false);
+
+  const [searchLocation, setSearchLocation] =
+    useState("");
+
+  const [searchingLocation, setSearchingLocation] =
+    useState(false);
+
+  const [scanning, setScanning] =
+    useState(false);
+
+  const [tunerFrequency, setTunerFrequency] =
+    useState(98.0);
+
+  const [scanMessage, setScanMessage] =
+    useState("");
+
   const [favorites, setFavorites] = useState(() => {
     try {
-      const saved = localStorage.getItem("retroRadioFavorites");
+      const saved = localStorage.getItem(
+        "retroRadioFavorites"
+      );
+
       return saved ? JSON.parse(saved) : [];
     } catch (error) {
-      console.error("Failed to load favorites:", error);
+      console.error(
+        "Failed to load favorites:",
+        error
+      );
+
       return [];
     }
   });
-  const [stationFilter, setStationFilter] = useState("all");
-  const displayedStations = stationFilter === "favorites" ? favorites : stations;
+
+  const [stationFilter, setStationFilter] =
+    useState("all");
+
+  const [selectedRegion, setSelectedRegion] =
+    useState("");
+
   const [volume, setVolume] = useState(() => {
-    const savedVolume = localStorage.getItem("retroRadioVolume");
+    const savedVolume =
+      localStorage.getItem("retroRadioVolume");
+
     if (savedVolume !== null) {
       const parsed = parseFloat(savedVolume);
+
       if (!Number.isNaN(parsed)) {
         return parsed;
       }
@@ -57,1482 +153,2300 @@ function App() {
 
     return 0.8;
   });
-const [muted, setMuted] = useState(false);
-const [recovering, setRecovering] = useState(false);
-const [autoFailover, setAutoFailover] = useState(false);
-const [presets, setPresets] = useState(() => {
-  try {
-    const saved = localStorage.getItem(
-      "retroRadioPresets"
+
+  const [muted, setMuted] =
+    useState(false);
+
+  const [recovering, setRecovering] =
+    useState(false);
+
+  const [autoFailover, setAutoFailover] =
+    useState(false);
+
+  const [presets, setPresets] = useState(() => {
+    try {
+      const saved = localStorage.getItem(
+        "retroRadioPresets"
+      );
+
+      return saved
+        ? JSON.parse(saved)
+        : [null, null, null, null, null, null];
+    } catch (error) {
+      console.error(
+        "Failed to load presets:",
+        error
+      );
+
+      return [null, null, null, null, null, null];
+    }
+  });
+
+  const [signalLevel, setSignalLevel] =
+    useState(0);
+
+  const [streamHealth, setStreamHealth] =
+    useState("READY");
+
+  const [showPresets, setShowPresets] =
+    useState(false);
+
+  const [presetToReplace, setPresetToReplace] =
+    useState(null);
+
+  const [theme, setTheme] = useState(() => {
+    return (
+      localStorage.getItem(
+        "retroRadioTheme"
+      ) || "car"
     );
+  });
 
-    return saved
-      ? JSON.parse(saved)
-      : [null, null, null, null, null, null];
-  } catch (error) {
-    console.error(
-      "Failed to load presets:",
-      error
+  const [online, setOnline] =
+    useState(navigator.onLine);
+
+  const onlineRef = useRef(navigator.onLine);
+
+  const [lastStationId, setLastStationId] =
+    useState(() => {
+      return (
+        localStorage.getItem(
+          "retroRadioLastStationId"
+        ) || null
+      );
+    });
+
+  const [isTuning, setIsTuning] =
+    useState(false);
+
+  /*
+   * ---------------------------------------------------------
+   * DERIVED LISTS
+   * ---------------------------------------------------------
+   */
+
+  // const displayedRegionStations =
+  //   selectedRegion === "ALL"
+  //     ? regionStations
+  //     : regionStations.filter(
+  //         (station) =>
+  //           getStationRegion(station) ===
+  //           selectedRegion
+  //       );
+
+  const displayedRegionStations =
+  useMemo(() => {
+    if (selectedRegion === "ALL" || !selectedRegion) {
+      return regionStations;
+    }
+
+    return regionStations.filter(
+      (station) =>
+        getStationRegion(station) ===
+        selectedRegion
     );
+  }, [
+    regionStations,
+    selectedRegion,
+  ]);
 
-    return [null, null, null, null, null, null];
-  }
-});
-const [signalLevel, setSignalLevel] = useState(0);
-const [streamHealth, setStreamHealth] = useState("READY");
-const [showPresets, setShowPresets] = useState(false);
-const [presetToReplace, setPresetToReplace] = useState(null);
-const [theme, setTheme] = useState(() => {
-  return localStorage.getItem("retroRadioTheme") || "car";
-});
-const [online, setOnline] = useState(navigator.onLine);
-const onlineRef = useRef(navigator.onLine);
-const [lastStationId, setLastStationId] = useState(() => {
-  return localStorage.getItem("retroRadioLastStationId") || null;
-});
-const [isTuning, setIsTuning] = useState(false);
+  // const displayedStations =
+  //   stationFilter === "favorites"
+  //     ? favorites
+  //     : stationFilter === "regions"
+  //     ? displayedRegionStations
+  //     : stations;
+
+  const displayedStations =
+  useMemo(() => {
+    if (stationFilter === "favorites") {
+      return favorites;
+    }
+
+    if (stationFilter === "regions") {
+      return displayedRegionStations;
+    }
+
+    return stations;
+  }, [
+    stationFilter,
+    favorites,
+    displayedRegionStations,
+    stations,
+  ]);
+
+  // const activeStationList =
+  //   stationFilter === "regions"
+  //     ? displayedRegionStations
+  //     : stationFilter === "favorites"
+  //     ? favorites
+  //     : stations;
+
+  const activeStationList =
+  useMemo(() => {
+    if (stationFilter === "regions") {
+      return displayedRegionStations;
+    }
+
+    if (stationFilter === "favorites") {
+      return favorites;
+    }
+
+    return stations;
+  }, [
+    stationFilter,
+    favorites,
+    displayedRegionStations,
+    stations,
+  ]);
+
+  const availableRegions = [
+    ...new Set(
+      regionStations
+        .map((station) => station.state)
+        .filter(Boolean)
+    ),
+  ].sort();
 
 
-// -- USE EFFECTS --
-useEffect(() => {
-  localStorage.setItem(
-    "retroRadioPresets",
-    JSON.stringify(presets)
-  );
-}, [presets]);
 
-useEffect(() => {
+  /*
+   * ---------------------------------------------------------
+   * EFFECTS
+   * ---------------------------------------------------------
+   */
+
+  useEffect(() => {
+    localStorage.setItem(
+      "retroRadioPresets",
+      JSON.stringify(presets)
+    );
+  }, [presets]);
+
+  useEffect(() => {
     loadStations();
+    loadRegionStations();
   }, []);
 
-useEffect(() => {
-  return () => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-    }
+  useEffect(() => {
+    return () => {
+      playbackRequestRef.current += 1;
 
-    if (recoveryTimerRef.current) {
-      clearTimeout(recoveryTimerRef.current);
-    }
+      if (scanIntervalRef.current) {
+        clearInterval(
+          scanIntervalRef.current
+        );
+      }
 
-    if (scanAudioRef.current) {
-      scanAudioRef.current.pause();
-      scanAudioRef.current.src = "";
-    }
+      if (recoveryTimerRef.current) {
+        clearTimeout(
+          recoveryTimerRef.current
+        );
+      }
+
+      if (tunerAnimationRef.current) {
+        cancelAnimationFrame(
+          tunerAnimationRef.current
+        );
+      }
+
+      if (scanAudioRef.current) {
+        scanAudioRef.current.pause();
+        scanAudioRef.current.src = "";
+        scanAudioRef.current = null;
+      }
+
+      if (audioRef.current) {
+        internalAudioChangeRef.current = true;
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "retroRadioFavorites",
+      JSON.stringify(favorites)
+    );
+  }, [favorites]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "retroRadioVolume",
+      volume.toString()
+    );
 
     if (audioRef.current) {
-      audioRef.current.pause();
+      audioRef.current.volume = volume;
     }
-  };
-}, []);
+  }, [volume]);
 
-useEffect(() => {
-  localStorage.setItem(
-    "retroRadioFavorites",
-    JSON.stringify(favorites)
-  );
-}, [favorites]);
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.muted = muted;
+    }
+  }, [muted]);
 
-useEffect(() => {
-  localStorage.setItem(
-    "retroRadioVolume",
-    volume.toString()
-  );
+  useEffect(() => {
+    const interval = setInterval(() => {
+      updateSignalLevel();
+    }, 1000);
 
-  if (audioRef.current) {
-    audioRef.current.volume = volume;
-  }
-}, [volume]);
+    return () => {
+      clearInterval(interval);
+    };
+  }, []);
 
-useEffect(() => {
-  if (audioRef.current) {
-    audioRef.current.muted = muted;
-  }
-}, [muted]);
+  useEffect(() => {
+    localStorage.setItem(
+      "retroRadioTheme",
+      theme
+    );
+  }, [theme]);
 
-useEffect(() => {
-  const interval = setInterval(() => {
-    updateSignalLevel();
-  }, 1000);
+  useEffect(() => {
+    onlineRef.current = online;
+  }, [online]);
+
+  /*
+   * Network listeners.
+   */
+  useEffect(() => {
+    const offlineHandler = () => {
+      handleOffline();
+    };
+
+    const onlineHandler = () => {
+      handleOnline();
+    };
+
+    window.addEventListener(
+      "offline",
+      offlineHandler
+    );
+
+    window.addEventListener(
+      "online",
+      onlineHandler
+    );
+
+    return () => {
+      window.removeEventListener(
+        "offline",
+        offlineHandler
+      );
+
+      window.removeEventListener(
+        "online",
+        onlineHandler
+      );
+    };
+  }, []);
+
+  /*
+   * Media Session.
+   *
+   * ONLY ONE EFFECT.
+   */
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) {
+      return;
+    }
+
+    navigator.mediaSession.metadata =
+      new MediaMetadata({
+        title:
+          currentStation?.name ||
+          "Retro Radio",
+        artist: "RETRO RADIO",
+        album: "FM Radio",
+        artwork:
+          currentStation?.favicon
+            ? [
+                {
+                  src: currentStation.favicon,
+                  sizes: "512x512",
+                  type: "image/png",
+                },
+              ]
+            : [],
+      });
+
+    try {
+      navigator.mediaSession.setActionHandler(
+        "play",
+        () => {
+          togglePlay();
+        }
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "pause",
+        () => {
+          togglePlay();
+        }
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "nexttrack",
+        () => {
+          nextStation();
+        }
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "previoustrack",
+        () => {
+          previousStation();
+        }
+      );
+    } catch (error) {
+      console.error(
+        "Media Session setup failed:",
+        error
+      );
+    }
+
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler(
+          "play",
+          null
+        );
+
+        navigator.mediaSession.setActionHandler(
+          "pause",
+          null
+        );
+
+        navigator.mediaSession.setActionHandler(
+          "nexttrack",
+          null
+        );
+
+        navigator.mediaSession.setActionHandler(
+          "previoustrack",
+          null
+        );
+      } catch (error) {
+        console.error(
+          "Media Session cleanup failed:",
+          error
+        );
+      }
+    };
+  }, [currentStation]);
+
+  useEffect(() => {
+    activeStationListRef.current =
+      activeStationList;
+
+    console.log(
+      "ACTIVE STATION LIST UPDATED:",
+      activeStationList.map(
+        (station) => station.name
+      )
+    );
+  }, [
+    activeStationList,
+  ]);
+
+  useEffect(() => {
+  const interval =
+    setInterval(() => {
+      const audio =
+        audioRef.current;
+
+      if (
+        !audio ||
+        audio.paused ||
+        manuallyPausedRef.current ||
+        scanning
+      ) {
+        return;
+      }
+
+      const currentTime =
+        audio.currentTime;
+
+      /*
+       * If playback has moved,
+       * stream is alive.
+       */
+      if (
+        currentTime !==
+        lastPlaybackTimeRef.current
+      ) {
+        lastPlaybackTimeRef.current =
+          currentTime;
+
+        return;
+      }
+
+      /*
+       * No movement.
+       *
+       * Don't recover immediately.
+       */
+      console.log(
+        "PLAYBACK NOT ADVANCING:",
+        currentStation?.name,
+        "readyState:",
+        audio.readyState
+      );
+    }, 3000);
 
   return () => {
     clearInterval(interval);
   };
 }, []);
 
-useEffect(() => {
-  localStorage.setItem(
-    "retroRadioTheme",
-    theme
-  );
-}, [theme]);
+  /*
+   * ---------------------------------------------------------
+   * HELPERS
+   * ---------------------------------------------------------
+   */
 
-useEffect(() => {
-  window.addEventListener(
-    "offline",
-    handleOffline
-  );
-
-  window.addEventListener(
-    "online",
-    handleOnline
-  );
-
-  return () => {
-    window.removeEventListener(
-      "offline",
-      handleOffline
-    );
-
-    window.removeEventListener(
-      "online",
-      handleOnline
-    );
-  };
-}, []);
-
-useEffect(() => {
-  if (!("mediaSession" in navigator)) {
-    return;
-  }
-
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: currentStation?.name || "Retro Radio",
-    artist: "RETRO RADIO",
-    album: "FM Radio",
-    artwork: currentStation?.favicon
-      ? [
-          {
-            src: currentStation.favicon,
-            sizes: "512x512",
-            type: "image/png",
-          },
-        ]
-      : [],
-  });
-
-  navigator.mediaSession.setActionHandler("play", () => {
-    togglePlay();
-  });
-
-  navigator.mediaSession.setActionHandler("pause", () => {
-    togglePlay();
-  });
-
-  navigator.mediaSession.setActionHandler("nexttrack", () => {
-    nextStation();
-  });
-
-  navigator.mediaSession.setActionHandler("previoustrack", () => {
-    previousStation();
-  });
-
-  return () => {
-    try {
-      navigator.mediaSession.setActionHandler("play", null);
-      navigator.mediaSession.setActionHandler("pause", null);
-      navigator.mediaSession.setActionHandler("nexttrack", null);
-      navigator.mediaSession.setActionHandler("previoustrack", null);
-    } catch (error) {
-      console.error("Media Session cleanup failed:", error);
+  function getActiveStationList() {
+    if (stationFilter === "favorites") {
+      return favorites;
     }
-  };
-}, [currentStation, playing]);
 
-useEffect(() => {
-  if (!("mediaSession" in navigator)) {
-    return;
-  }
-
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: currentStation?.name || "Retro Radio",
-    artist: "RETRO RADIO",
-    album: "FM Radio",
-    artwork: currentStation?.favicon
-      ? [
-          {
-            src: currentStation.favicon,
-            sizes: "512x512",
-            type: "image/png",
-          },
-        ]
-      : [],
-  });
-
-  navigator.mediaSession.setActionHandler(
-    "play",
-    () => {
-      togglePlay();
+    if (stationFilter === "regions") {
+      return displayedRegionStations;
     }
-  );
 
-  navigator.mediaSession.setActionHandler(
-    "pause",
-    () => {
-      togglePlay();
+    return stations;
+  }
+
+  function getStationRegion(station) {
+    if (!station) {
+      return "UNKNOWN";
     }
-  );
 
-  navigator.mediaSession.setActionHandler(
-    "nexttrack",
-    () => {
-      nextStation();
+    return (
+      station.state ||
+      station.country ||
+      "UNKNOWN"
+    ).trim();
+  }
+
+  function getStationFrequency(station) {
+    if (!station) {
+      return null;
     }
-  );
 
-  navigator.mediaSession.setActionHandler(
-    "previoustrack",
-    () => {
-      previousStation();
-    }
-  );
-
-  return () => {
-    try {
-      navigator.mediaSession.setActionHandler(
-        "play",
-        null
-      );
-
-      navigator.mediaSession.setActionHandler(
-        "pause",
-        null
-      );
-
-      navigator.mediaSession.setActionHandler(
-        "nexttrack",
-        null
-      );
-
-      navigator.mediaSession.setActionHandler(
-        "previoustrack",
-        null
-      );
-    } catch (error) {
-      console.error(
-        "Media Session cleanup failed:",
-        error
-      );
-    }
-  };
-}, [currentStation, playing]);
-
-
-
-// -- FUNCTIONS --
-
-function animateTunerTo(frequency) {
-  if (frequency === null) {
-    return;
-  }
-  setIsTuning(true);
-
-  if (tunerAnimationRef.current) {
-    cancelAnimationFrame(
-      tunerAnimationRef.current
+    const frequency = Number(
+      station.frequency
     );
-  }
-
-  setDisplayFrequency(frequency);
-
-  const start = tunerFrequency;
-  const end = frequency;
-
-  const duration = 350;
-  const startTime = performance.now();
-
-  const animate = (currentTime) => {
-    const elapsed =
-      currentTime - startTime;
-
-    const progress =
-      Math.min(elapsed / duration, 1);
-
-    // Smooth ease-out
-    const eased =
-      1 - Math.pow(1 - progress, 3);
-
-    const value =
-      start + (end - start) * eased;
-
-    setDisplayFrequency(value);
-
-    if (progress < 1) {
-      tunerAnimationRef.current =
-        requestAnimationFrame(animate);
-    } else {
-      setTunerFrequency(end);
-      setDisplayFrequency(end);
-      setIsTuning(false);
-      tunerAnimationRef.current = null;
-    }
-  };
-
-  tunerAnimationRef.current =
-    requestAnimationFrame(animate);
-}
-
-function getFrequencyScale() {
-  const frequencies = [];
-
-  for (let i = 880; i <= 1080; i++) {
-    frequencies.push(i / 10);
-  }
-
-  return frequencies;
-}
-
-function handleOffline() {
-  console.log("INTERNET OFFLINE");
-
-  wasOfflineRef.current = true;
-
-  // Only remember playback if the user did NOT
-  // intentionally pause the radio.
-  if (!manuallyPausedRef.current) {
-    wasPlayingBeforeOfflineRef.current = true;
-  } else {
-    wasPlayingBeforeOfflineRef.current = false;
-  }
-
-  if (recoveryTimerRef.current) {
-    clearTimeout(recoveryTimerRef.current);
-    recoveryTimerRef.current = null;
-  }
-
-  recoveryAttemptRef.current = 0;
-
-  setRecovering(false);
-  setAutoFailover(false);
-  setPlaying(false);
-
-  setSignalLevel(0);
-  setStreamHealth("OFFLINE");
-  setScanMessage("INTERNET OFFLINE");
-
-  console.log(
-    "MANUALLY PAUSED:",
-    manuallyPausedRef.current
-  );
-
-  console.log(
-    "WILL AUTO RESUME:",
-    wasPlayingBeforeOfflineRef.current
-  );
-}
-
-async function handleOnline() {
-  console.log("INTERNET ONLINE");
-
-  if (!wasOfflineRef.current) {
-    return;
-  }
-
-  wasOfflineRef.current = false;
-
-  // USER MANUALLY PAUSED
-  if (manuallyPausedRef.current) {
-    console.log(
-      "ONLINE: USER HAD PAUSED RADIO — STAY PAUSED"
-    );
-
-    wasPlayingBeforeOfflineRef.current = false;
-
-    setRecovering(false);
-    setPlaying(false);
-    setScanMessage("");
-    setStreamHealth("READY");
-    setSignalLevel(0);
-
-    return;
-  }
-
-  // RADIO WAS PLAYING BEFORE INTERNET LOSS
-  const station = currentStation;
-
-  if (
-    !station ||
-    !wasPlayingBeforeOfflineRef.current
-  ) {
-    wasPlayingBeforeOfflineRef.current = false;
-
-    setRecovering(false);
-    setPlaying(false);
-    setScanMessage("");
-    setStreamHealth("READY");
-
-    return;
-  }
-
-  wasPlayingBeforeOfflineRef.current = false;
-
-  recoveryAttemptRef.current = 0;
-
-  if (recoveryTimerRef.current) {
-    clearTimeout(
-      recoveryTimerRef.current
-    );
-
-    recoveryTimerRef.current = null;
-  }
-
-  setScanMessage("RECONNECTING...");
-  setRecovering(true);
-  setStreamHealth("RECOVERING");
-
-  console.log(
-    "RECONNECTING:",
-    station.name
-  );
-
-  await new Promise((resolve) =>
-    setTimeout(resolve, 1000)
-  );
-
-  // User pressed pause during reconnect delay
-  if (manuallyPausedRef.current) {
-    console.log(
-      "RECONNECT CANCELLED: USER PAUSED"
-    );
-
-    setRecovering(false);
-    setPlaying(false);
-    setStreamHealth("READY");
-    setScanMessage("");
-
-    return;
-  }
-
-  if (!navigator.onLine) {
-    console.log(
-      "INTERNET DROPPED AGAIN"
-    );
-
-    return;
-  }
-
-  await recoverCurrentStation();
-}
-
-function getFrequencyDisplay(station) {
-  const frequency =
-    getStationFrequency(station);
-
-  if (frequency === null) {
-    return "STREAM";
-  }
-
-  return `${frequency.toFixed(1)} FM`;
-}
-
-function getStationFrequency(station) {
-  if (!station) {
-    return null;
-  }
-
-  const frequency = Number(
-    station.frequency
-  );
-
-  if (
-    !Number.isFinite(frequency) ||
-    frequency <= 0
-  ) {
-    return null;
-  }
-
-  return frequency;
-}
-
-function updateSignalLevel() {
-  const audio = audioRef.current;
-
-  if (!audio) {
-    setSignalLevel(0);
-    setStreamHealth("LOST");
-    return;
-  }
-
-  if (audio.error) {
-    setSignalLevel(0);
-    setStreamHealth("LOST");
-    return;
-  }
-
-  if (audio.paused) {
-    setSignalLevel(0);
-    setStreamHealth("PAUSED");
-    return;
-  }
-
-  if (audio.readyState === 0) {
-    setSignalLevel(1);
-    setStreamHealth("WEAK");
-    return;
-  }
-
-  if (audio.readyState === 1) {
-    setSignalLevel(2);
-    setStreamHealth("WEAK");
-    return;
-  }
-
-  if (audio.readyState === 2) {
-    setSignalLevel(3);
-    setStreamHealth("FAIR");
-    return;
-  }
-
-  if (audio.readyState >= 3) {
-    setSignalLevel(5);
-    setStreamHealth("GOOD");
-  }
-}
-
-function savePreset(index) {
-  if (!currentStation) {
-    return;
-  }
-
-  // If this preset already contains a station,
-  // ask for confirmation before replacing it.
-  if (presets[index]) {
-    setPresetToReplace(index);
-    return;
-  }
-
-  setPresets((previousPresets) => {
-    const updated = [
-      ...previousPresets
-    ];
-
-    updated[index] = currentStation;
-
-    return updated;
-  });
-
-  console.log(
-    `Saved ${currentStation.name} to P${index + 1}`
-  );
-}
-
-async function tunePreset(index) {
-  const station = presets[index];
-
-  if (!station) {
-    return;
-  }
-
-  console.log(
-    `Tuning to P${index + 1}:`,
-    station.name
-  );
-
-  await playStation(station);
-}
-
-async function autoFailoverToNextStation() {
-  if (!navigator.onLine) {
-
-  console.log(
-    "AUTO FAILOVER SKIPPED: INTERNET OFFLINE"
-  );
-
-  setAutoFailover(false);
-  setRecovering(false);
-  setStreamHealth("OFFLINE");
-
-  return;
-}
-
-  if (
-    scanning ||
-    stations.length === 0 ||
-    !currentStation
-  ) {
-    return;
-  }
-
-  if (failoverRef.current) {
-    return;
-  }
-
-  failoverRef.current = true;
-
-  setAutoFailover(true);
-  setRecovering(false);
-  setPlaying(false);
-
-  console.log(
-    "AUTO FAILOVER STARTED"
-  );
-
-  const currentIndex =
-    stations.findIndex(
-      (station) =>
-        station.id === currentStation.id
-    );
-
-  if (currentIndex === -1) {
-    failoverRef.current = false;
-    setAutoFailover(false);
-    return;
-  }
-
-  let index = currentIndex + 1;
-
-  while (
-    index < stations.length
-  ) {
 
     if (
-      !failoverRef.current ||
-      scanning
+      !Number.isFinite(frequency) ||
+      frequency <= 0
     ) {
-      break;
+      return null;
     }
 
-    const station =
-      stations[index];
+    return frequency;
+  }
 
-    const frequency =  getStationFrequency(station);
+  function getFrequencyDisplay(station) {
+    const frequency =
+      getStationFrequency(station);
 
-  setScanMessage(
-  frequency !== null
-    ? `AUTO SEEK: ${frequency.toFixed(1)} FM`
-    : `AUTO SEEK: ${station.name}`
-);
+    if (frequency === null) {
+      return "STREAM";
+    }
 
-    console.log(
-      "AUTO TEST:",
-      station.name
-    );
+    return `${frequency.toFixed(1)} FM`;
+  }
 
-    const playable =
-      await testStation(station);
+  function getStationType(station) {
+    if (!station) {
+      return "RADIO";
+    }
 
+    const frequency =
+      getStationFrequency(station);
+
+    if (frequency !== null) {
+      return `${frequency.toFixed(1)} FM`;
+    }
+
+    return "DIGITAL";
+  }
+
+  function getStationDistance(station) {
     if (
-      playable &&
-      failoverRef.current
+      !station ||
+      station.distance === null
     ) {
+      return "DISTANCE N/A";
+    }
 
-      console.log(
-        "AUTO LOCK:",
-        station.name
-      );
+    return `${station.distance.toFixed(
+      1
+    )} KM`;
+  }
 
-      failoverRef.current = false;
+  function getStationTags(station) {
+    if (!station?.tags) {
+      return "";
+    }
 
-      setAutoFailover(false);
-      setScanMessage("LOCKED");
+    return station.tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((tag) => tag.toUpperCase())
+      .join(" • ");
+  }
 
-      await playStation(
-        station
-      );
+  /*
+   * ---------------------------------------------------------
+   * TUNER
+   * ---------------------------------------------------------
+   */
 
+  function animateTunerTo(frequency) {
+    if (frequency === null) {
       return;
     }
 
-    index++;
-  }
+    setIsTuning(true);
 
-  console.log(
-    "AUTO FAILOVER FAILED"
-  );
-
-  failoverRef.current = false;
-
-  setAutoFailover(false);
-  setPlaying(false);
-
-  setScanMessage(
-    "NO BACKUP STATION"
-  );
-}
-
-async function recoverCurrentStation() {
-
-  // NEVER attempt recovery while internet is offline.
-  if (!navigator.onLine) {
-    console.log(
-      "RECOVERY BLOCKED: INTERNET OFFLINE"
-    );
-
-    if (recoveryTimerRef.current) {
-      clearTimeout(recoveryTimerRef.current);
-      recoveryTimerRef.current = null;
+    if (tunerAnimationRef.current) {
+      cancelAnimationFrame(
+        tunerAnimationRef.current
+      );
     }
 
-    setRecovering(false);
-    setPlaying(false);
-    setSignalLevel(0);
-    setStreamHealth("OFFLINE");
-    setScanMessage("INTERNET OFFLINE");
+    const start = tunerFrequency;
+    const end = frequency;
 
-    return;
-  }
+    const duration = 350;
+    const startTime = performance.now();
 
+    const animate = (currentTime) => {
+      const elapsed =
+        currentTime - startTime;
 
-  const audio = audioRef.current;
-  const station = currentStation;
+      const progress =
+        Math.min(
+          elapsed / duration,
+          1
+        );
 
-  if (station) {
-    recoveryStationIdRef.current = station.id;
-  }
+      const eased =
+        1 -
+        Math.pow(
+          1 - progress,
+          3
+        );
 
-  if (!audio || !station?.streamUrl) {
-    return;
-  }
+      const value =
+        start +
+        (end - start) * eased;
 
-  if (scanning) {
-    return;
-  }
+      setDisplayFrequency(value);
 
-  if (recoveryAttemptRef.current >= 3) {
-    console.log(
-    "RECOVERY FAILED: Starting auto failover"
-  );
-
-  setRecovering(false);
-
-  recoveryAttemptRef.current = 0;
-
-  await autoFailoverToNextStation();
-
-  return;
-  }
-
-  recoveryAttemptRef.current += 1;
-
-  const attempt =
-    recoveryAttemptRef.current;
-
-  console.log(
-    `RECOVERY ATTEMPT ${attempt}:`,
-    station.name
-  );
-
-  setRecovering(true);
-  setPlaying(false);
-
-  try {
-
-
-    if (
-      !currentStation ||
-      currentStation.id !==
-      recoveryStationIdRef.current
-      ) {
-        console.log(
-          "RECOVERY CANCELLED: STATION CHANGED"
+      if (progress < 1) {
+        tunerAnimationRef.current =
+          requestAnimationFrame(
+            animate
           );
-      setRecovering(false);
-      return;
+      } else {
+        setTunerFrequency(end);
+        setDisplayFrequency(end);
+        setIsTuning(false);
+        tunerAnimationRef.current =
+          null;
+      }
+    };
+
+    tunerAnimationRef.current =
+      requestAnimationFrame(
+        animate
+      );
+  }
+
+  function getFrequencyScale() {
+    const frequencies = [];
+
+    for (let i = 880; i <= 1080; i++) {
+      frequencies.push(i / 10);
     }
 
-    audio.pause();
+    return frequencies;
+  }
 
-    audio.src = station.streamUrl;
+  /*
+   * ---------------------------------------------------------
+   * NETWORK
+   * ---------------------------------------------------------
+   */
 
-    audio.load();
-
-    await audio.play();
-
+  function handleOffline() {
     console.log(
-      "RECOVERY SUCCESS:",
-      station.name
+      "INTERNET OFFLINE"
     );
 
-    setRecovering(false);
-    setPlaying(true);
+    setOnline(false);
+    onlineRef.current = false;
 
-    recoveryAttemptRef.current = 0;
+    wasOfflineRef.current = true;
 
-  } catch (error) {
+    if (
+      !manuallyPausedRef.current
+    ) {
+      wasPlayingBeforeOfflineRef.current =
+        true;
+    } else {
+      wasPlayingBeforeOfflineRef.current =
+        false;
+    }
 
-    console.error(
-      `RECOVERY FAILED ${attempt}:`,
-      error
-    );
+    /*
+     * Invalidate every pending play/recovery.
+     */
+    playbackRequestRef.current += 1;
 
     if (recoveryTimerRef.current) {
       clearTimeout(
         recoveryTimerRef.current
       );
+
+      recoveryTimerRef.current = null;
     }
 
-    recoveryTimerRef.current = setTimeout(() => {
+    recoveryRunningRef.current = false;
+    errorRecoveryPendingRef.current =
+      false;
+
+    setRecovering(false);
+    setAutoFailover(false);
+    setPlaying(false);
+
+    setSignalLevel(0);
+    setStreamHealth("OFFLINE");
+    setScanMessage("INTERNET OFFLINE");
+
+    console.log(
+      "MANUALLY PAUSED:",
+      manuallyPausedRef.current
+    );
+
+    console.log(
+      "WILL AUTO RESUME:",
+      wasPlayingBeforeOfflineRef.current
+    );
+  }
+
+  async function handleOnline() {
+    console.log(
+      "INTERNET ONLINE"
+    );
+
+    setOnline(true);
+    onlineRef.current = true;
+
+    if (!wasOfflineRef.current) {
+      return;
+    }
+
+    wasOfflineRef.current = false;
+
+    if (
+      manuallyPausedRef.current
+    ) {
+      console.log(
+        "ONLINE: USER HAD PAUSED RADIO — STAY PAUSED"
+      );
+
+      wasPlayingBeforeOfflineRef.current =
+        false;
+
+      setRecovering(false);
+      setPlaying(false);
+      setScanMessage("");
+      setStreamHealth("READY");
+      setSignalLevel(0);
+
+      return;
+    }
+
+    const station =
+      currentStation;
+
+    if (
+      !station ||
+      !wasPlayingBeforeOfflineRef.current
+    ) {
+      wasPlayingBeforeOfflineRef.current =
+        false;
+
+      setRecovering(false);
+      setPlaying(false);
+      setScanMessage("");
+      setStreamHealth("READY");
+
+      return;
+    }
+
+    wasPlayingBeforeOfflineRef.current =
+      false;
+
+    recoveryAttemptRef.current = 0;
+
+    if (recoveryTimerRef.current) {
+      clearTimeout(
+        recoveryTimerRef.current
+      );
+
       recoveryTimerRef.current = null;
+    }
 
-      if (
-        !currentStation ||
-        currentStation.id !==
-        recoveryStationIdRef.current
-        ) {
-          console.log(
-            "RECOVERY TIMER CANCELLED: STATION CHANGED"
-            );
-            setRecovering(false);
-            return;
-        }
+    setScanMessage(
+      "RECONNECTING..."
+    );
 
-    // Internet disappeared while waiting.
-    // Do NOT start another recovery attempt.
+    setRecovering(true);
+    setStreamHealth("RECOVERING");
+
+    console.log(
+      "RECONNECTING:",
+      station.name
+    );
+
+    await new Promise(
+      (resolve) =>
+        setTimeout(resolve, 1000)
+    );
+
+    if (
+      manuallyPausedRef.current
+    ) {
+      console.log(
+        "RECONNECT CANCELLED: USER PAUSED"
+      );
+
+      setRecovering(false);
+      setPlaying(false);
+      setStreamHealth("READY");
+      setScanMessage("");
+
+      return;
+    }
+
     if (!navigator.onLine) {
       console.log(
-        "RECOVERY CANCELLED: INTERNET OFFLINE"
+        "INTERNET DROPPED AGAIN"
       );
+
+      return;
+    }
+
+    await recoverCurrentStation();
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * SIGNAL
+   * ---------------------------------------------------------
+   */
+
+  function updateSignalLevel() {
+    const audio =
+      audioRef.current;
+
+    if (!audio) {
+      setSignalLevel(0);
+      setStreamHealth("LOST");
+      return;
+    }
+
+    if (audio.error) {
+      setSignalLevel(0);
+      setStreamHealth("LOST");
+      return;
+    }
+
+    if (audio.paused) {
+      setSignalLevel(0);
+
+      /*
+       * Do not overwrite OFFLINE.
+       */
+      if (navigator.onLine) {
+        setStreamHealth("PAUSED");
+      }
+
+      return;
+    }
+
+    if (audio.readyState === 0) {
+      setSignalLevel(1);
+      setStreamHealth("WEAK");
+      return;
+    }
+
+    if (audio.readyState === 1) {
+      setSignalLevel(2);
+      setStreamHealth("WEAK");
+      return;
+    }
+
+    if (audio.readyState === 2) {
+      setSignalLevel(3);
+      setStreamHealth("FAIR");
+      return;
+    }
+
+    if (audio.readyState >= 3) {
+      setSignalLevel(5);
+      setStreamHealth("GOOD");
+    }
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * PRESETS
+   * ---------------------------------------------------------
+   */
+
+  function savePreset(index) {
+    if (!currentStation) {
+      return;
+    }
+
+    if (presets[index]) {
+      setPresetToReplace(index);
+      return;
+    }
+
+    setPresets(
+      (previousPresets) => {
+        const updated = [
+          ...previousPresets,
+        ];
+
+        updated[index] =
+          currentStation;
+
+        return updated;
+      }
+    );
+
+    console.log(
+      `Saved ${currentStation.name} to P${
+        index + 1
+      }`
+    );
+  }
+
+  async function tunePreset(index) {
+    const station =
+      presets[index];
+
+    if (!station) {
+      return;
+    }
+
+    console.log(
+      `Tuning to P${index + 1}:`,
+      station.name
+    );
+
+    await playStation(station);
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * STATION HEALTH
+   * ---------------------------------------------------------
+   */
+
+  function isUnplayableStream(
+    audio,
+    error = null
+  ) {
+    if (
+      error?.name ===
+      "NotSupportedError"
+    ) {
+      return true;
+    }
+
+    if (
+      audio?.error?.code === 4
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * AUTO FAILOVER
+   * ---------------------------------------------------------
+   */
+
+  async function autoFailoverToNextStation() {
+    if (!navigator.onLine) {
+      console.log(
+        "AUTO FAILOVER SKIPPED: INTERNET OFFLINE"
+      );
+
+      setAutoFailover(false);
+      setRecovering(false);
+      setStreamHealth("OFFLINE");
+
+      return;
+    }
+
+    if (
+      scanning ||
+      stations.length === 0 ||
+      !currentStation
+    ) {
+      return;
+    }
+
+    if (failoverRef.current) {
+      return;
+    }
+
+    failoverRef.current = true;
+
+    setAutoFailover(true);
+    setRecovering(false);
+    setPlaying(false);
+
+    console.log(
+      "AUTO FAILOVER STARTED"
+    );
+
+    const currentIndex =
+      stations.findIndex(
+        (station) =>
+          station.id ===
+          currentStation.id
+      );
+
+    if (currentIndex === -1) {
+      failoverRef.current = false;
+      setAutoFailover(false);
+      return;
+    }
+
+    let index =
+      currentIndex + 1;
+
+    while (
+      index < stations.length
+    ) {
+      if (
+        !failoverRef.current ||
+        scanning
+      ) {
+        break;
+      }
+
+      if (!navigator.onLine) {
+        break;
+      }
+
+      const station =
+        stations[index];
+
+      const frequency =
+        getStationFrequency(
+          station
+        );
+
+      setScanMessage(
+        frequency !== null
+          ? `AUTO SEEK: ${frequency.toFixed(
+              1
+            )} FM`
+          : `AUTO SEEK: ${station.name}`
+      );
+
+      console.log(
+        "AUTO TEST:",
+        station.name
+      );
+
+      const playable =
+        await testStation(
+          station
+        );
+
+      if (
+        playable &&
+        failoverRef.current
+      ) {
+        console.log(
+          "AUTO LOCK:",
+          station.name
+        );
+
+        failoverRef.current =
+          false;
+
+        setAutoFailover(false);
+        setScanMessage("LOCKED");
+
+        await playStation(
+          station
+        );
+
+        return;
+      }
+
+      index++;
+    }
+
+    console.log(
+      "AUTO FAILOVER FAILED"
+    );
+
+    failoverRef.current = false;
+
+    setAutoFailover(false);
+    setPlaying(false);
+
+    setScanMessage(
+      "NO BACKUP STATION"
+    );
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * RECOVERY
+   * ---------------------------------------------------------
+   */
+
+  async function recoverCurrentStation() {
+    if (!navigator.onLine) {
+      console.log(
+        "RECOVERY BLOCKED: INTERNET OFFLINE"
+      );
+
+      if (
+        recoveryTimerRef.current
+      ) {
+        clearTimeout(
+          recoveryTimerRef.current
+        );
+
+        recoveryTimerRef.current =
+          null;
+      }
+
+      recoveryRunningRef.current =
+        false;
 
       setRecovering(false);
       setPlaying(false);
       setSignalLevel(0);
       setStreamHealth("OFFLINE");
-      setScanMessage("INTERNET OFFLINE");
+      setScanMessage(
+        "INTERNET OFFLINE"
+      );
 
       return;
     }
 
-    recoverCurrentStation();
-
-  }, 1500);
-  }
-}
-
-function isUnplayableStream(audio, error = null) {
-  if (error?.name === "NotSupportedError") {
-    return true;
-  }
-
-  if (audio?.error?.code === 4) {
-    return true;
-  }
-
-  return false;
-}
-
-function toggleFavorite(station) {
-  if (!station) {
-    return;
-  }
-
-  setFavorites((previousFavorites) => {
-    const exists = previousFavorites.some(
-      (favorite) => favorite.id === station.id
-    );
-
-    if (exists) {
-      return previousFavorites.filter(
-        (favorite) => favorite.id !== station.id
-      );
+    if (scanning) {
+      return;
     }
-
-    return [...previousFavorites, station];
-  });
-}
-
-function isFavorite(station) {
-  if (!station) {
-    return false;
-  }
-
-  return favorites.some(
-    (favorite) => favorite.id === station.id
-  );
-}
-
-  async function loadStations(latitude = null, longitude = null) {
-    const requestId =
-    ++stationLoadRequestRef.current;
-
-  try {
-    // Changing station lists means the
-    // current stream must stop.
-    const audio = audioRef.current;
-
-    if (audio) {
-      audio.pause();
-    }
-
-    setPlaying(false);
-    setLoading(true);
-
-    const params = new URLSearchParams({
-      hidebroken: "true",
-      has_geo_info: "true",
-      order: "votes",
-      reverse: "true",
-      limit: "100",
-    });
 
     if (
-      latitude === null ||
-      longitude === null
+      manuallyPausedRef.current
     ) {
-      params.set("country", "India");
+      console.log(
+        "RECOVERY BLOCKED: USER PAUSED"
+      );
+
+      return;
     }
 
-    const requestUrl = `${API}?${params}`;
+    if (
+      recoveryRunningRef.current
+    ) {
+      console.log(
+        "RECOVERY ALREADY RUNNING"
+      );
+
+      return;
+    }
+
+    const station =
+      currentStation;
+
+    const audio =
+      audioRef.current;
+
+    if (
+      !audio ||
+      !station?.streamUrl
+    ) {
+      return;
+    }
+
+    recoveryStationIdRef.current =
+      station.id;
+
+    if (
+      recoveryAttemptRef.current >= 3
+    ) {
+      console.log(
+        "RECOVERY FAILED: Starting auto failover"
+      );
+
+      recoveryAttemptRef.current =
+        0;
+
+      setRecovering(false);
+
+      await autoFailoverToNextStation();
+
+      return;
+    }
+
+    recoveryRunningRef.current =
+      true;
+
+    recoveryAttemptRef.current +=
+      1;
+
+    const attempt =
+      recoveryAttemptRef.current;
+
+    const recoveryStationId =
+      station.id;
 
     console.log(
-      "Request:",
-      requestUrl
+      `RECOVERY ATTEMPT ${attempt}:`,
+      station.name
     );
 
-    const response = await fetch(
-      requestUrl
+    setRecovering(true);
+    setPlaying(false);
+    setStreamHealth("RECOVERING");
+
+    try {
+      if (
+        !currentStation ||
+        currentStation.id !==
+          recoveryStationId
+      ) {
+        console.log(
+          "RECOVERY CANCELLED: STATION CHANGED"
+        );
+
+        recoveryRunningRef.current =
+          false;
+
+        setRecovering(false);
+
+        return;
+      }
+
+      if (!navigator.onLine) {
+        throw new Error(
+          "Internet offline"
+        );
+      }
+
+      /*
+       * Invalidate the previous play() promise.
+       */
+      const requestId =
+        ++playbackRequestRef.current;
+
+      internalAudioChangeRef.current =
+        true;
+
+      audio.pause();
+
+      /*
+       * Only reset the source if necessary.
+       */
+      const currentSrc =
+        audio.currentSrc ||
+        audio.src;
+
+      if (
+        currentSrc !==
+        station.streamUrl
+      ) {
+        audio.src =
+          station.streamUrl;
+        audio.load();
+      } else {
+        /*
+         * Re-load the same stream to recover
+         * from a stalled stream.
+         */
+        audio.load();
+      }
+
+      audioStationIdRef.current =
+        station.id;
+
+      internalAudioChangeRef.current =
+        false;
+
+      /*
+       * Make sure another station hasn't
+       * been selected while load() happened.
+       */
+      if (
+        requestId !==
+          playbackRequestRef.current ||
+        currentStation?.id !==
+          recoveryStationId
+      ) {
+        console.log(
+          "RECOVERY ABORTED: REQUEST OBSOLETE"
+        );
+
+        recoveryRunningRef.current =
+          false;
+
+        return;
+      }
+
+      await audio.play();
+
+      /*
+       * The play promise may have completed
+       * after another station was selected.
+       */
+      if (
+        requestId !==
+          playbackRequestRef.current ||
+        currentStation?.id !==
+          recoveryStationId
+      ) {
+        console.log(
+          "RECOVERY PLAY RESULT IGNORED: STATION CHANGED"
+        );
+
+        return;
+      }
+
+      console.log(
+        "RECOVERY SUCCESS:",
+        station.name
+      );
+
+      recoveryRunningRef.current =
+        false;
+
+      errorRecoveryPendingRef.current =
+        false;
+
+      setRecovering(false);
+      setPlaying(true);
+
+      recoveryAttemptRef.current = 0;
+      setStreamHealth("GOOD");
+    } catch (error) {
+      recoveryRunningRef.current =
+        false;
+
+      /*
+       * AbortError is expected when another
+       * play/pause/source operation supersedes
+       * the current one.
+       */
+      if (
+        error?.name === "AbortError"
+      ) {
+        console.log(
+          "RECOVERY ABORTED: PLAY REQUEST SUPERSEDED"
+        );
+
+        return;
+      }
+
+      console.error(
+        `RECOVERY FAILED ${attempt}:`,
+        error
+      );
+
+      if (
+        !navigator.onLine ||
+        error?.message ===
+          "Internet offline"
+      ) {
+        setRecovering(false);
+        setPlaying(false);
+        setSignalLevel(0);
+        setStreamHealth("OFFLINE");
+        setScanMessage(
+          "INTERNET OFFLINE"
+        );
+
+        return;
+      }
+
+      if (
+        !currentStation ||
+        currentStation.id !==
+          recoveryStationId
+      ) {
+        console.log(
+          "RECOVERY TIMER CANCELLED: STATION CHANGED"
+        );
+
+        setRecovering(false);
+
+        return;
+      }
+
+      if (
+        recoveryTimerRef.current
+      ) {
+        clearTimeout(
+          recoveryTimerRef.current
+        );
+      }
+
+      recoveryTimerRef.current =
+        setTimeout(() => {
+          recoveryTimerRef.current =
+            null;
+
+          if (
+            !navigator.onLine
+          ) {
+            return;
+          }
+
+          if (
+            manuallyPausedRef.current
+          ) {
+            return;
+          }
+
+          if (
+            !currentStation ||
+            currentStation.id !==
+              recoveryStationId
+          ) {
+            return;
+          }
+
+          recoverCurrentStation();
+        }, 1500);
+    }
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * FAVORITES
+   * ---------------------------------------------------------
+   */
+
+  function toggleFavorite(station) {
+    if (!station) {
+      return;
+    }
+
+    setFavorites(
+      (previousFavorites) => {
+        const exists =
+          previousFavorites.some(
+            (favorite) =>
+              favorite.id ===
+              station.id
+          );
+
+        if (exists) {
+          return previousFavorites.filter(
+            (favorite) =>
+              favorite.id !==
+              station.id
+          );
+        }
+
+        return [
+          ...previousFavorites,
+          station,
+        ];
+      }
     );
+  }
 
-    const data = await response.json();
+  function isFavorite(station) {
+    if (!station) {
+      return false;
+    }
 
-    if (
-      requestId !== stationLoadRequestRef.current
+    return favorites.some(
+      (favorite) =>
+        favorite.id === station.id
+    );
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * LOAD STATIONS
+   * ---------------------------------------------------------
+   */
+
+  async function loadStations(
+    latitude = null,
+    longitude = null
+  ) {
+    const requestId =
+      ++stationLoadRequestRef.current;
+
+    try {
+      stopCurrentPlayback();
+
+      setPlaying(false);
+      setLoading(true);
+
+      const params =
+        new URLSearchParams({
+          hidebroken: "true",
+          has_geo_info: "true",
+          order: "votes",
+          reverse: "true",
+          limit: "100",
+        });
+
+      if (
+        latitude === null ||
+        longitude === null
+      ) {
+        params.set(
+          "country",
+          "India"
+        );
+      }
+
+      const requestUrl =
+        `${API}?${params}`;
+
+      console.log(
+        "Request:",
+        requestUrl
+      );
+
+      const response =
+        await fetch(requestUrl);
+
+      const data =
+        await response.json();
+
+      if (
+        requestId !==
+        stationLoadRequestRef.current
       ) {
         console.log(
           "IGNORING OLD STATION REQUEST:",
           requestId
         );
+
         return;
       }
 
-    console.log(
-      "Station count:",
-      data.length
-    );
-
-    const normalizedStations = data.map(
-      (station) =>
-        normalizeStation(
-          station,
-          latitude,
-          longitude
-        )
-    );
-
-    // If we have a location,
-    // sort stations by distance.
-    if (
-      latitude !== null &&
-      longitude !== null
-    ) {
-      normalizedStations.sort(
-        (a, b) => {
-
-          if (a.distance === null) {
-            return 1;
-          }
-
-          if (b.distance === null) {
-            return -1;
-          }
-
-          return (
-            a.distance -
-            b.distance
-          );
-        }
-      );
-    }
-
-    // Update existing favorites
-    // with fresh station information.
-    setFavorites((previousFavorites) => {
-      return previousFavorites.map((favorite) => {
-        const freshStation =
-        normalizedStations.find(
-          (station) =>
-            station.id === favorite.id
-        );
-
-        if (!freshStation) {
-          return favorite;
-        }
-
-        return {
-           ...favorite,
-           ...freshStation,
-        };
-      });
-    });
-
-    setPresets((previousPresets) => {
-      return previousPresets.map((preset) => {
-      if (!preset) {
-      return null;
-      }
-
-      const freshStation =
-        normalizedStations.find(
-          (station) =>
-            station.id === preset.id
-        );
-
-      if (!freshStation) {
-        return preset;
-      }
-
-      return {
-        ...preset,
-        ...freshStation,
-      };
-    });
-    });
-
-    setStations(
-      normalizedStations
-    );
-
-    if (normalizedStations.length > 0) {
-
-      const savedStationId =
-  localStorage.getItem(
-    "retroRadioLastStationId"
-  );
-
-  const savedStation =
-  savedStationId
-    ? normalizedStations.find(
-        (station) =>
-          station.id === savedStationId
-      )
-    : null;
-
-  const stationToRestore =
-    savedStation || normalizedStations[0];
-
-  console.log(
-    savedStation
-      ? "RESTORING LAST STATION:"
-      : "NO SAVED STATION — USING FIRST STATION:",
-    stationToRestore.name
-  );
-
-  setCurrentStation(stationToRestore);
-  setLastStationId(stationToRestore.id);
-
-  if (audioRef.current) {
-    audioRef.current.pause();
-
-    audioRef.current.src =
-      stationToRestore.streamUrl;
-
-    audioRef.current.load();
-  }
-
-  setPlaying(false);
-
-  const frequency =
-    getStationFrequency(stationToRestore);
-
-  if (frequency !== null) {
-    setTunerFrequency(frequency);
-  } else {
-    setTunerFrequency(null);
-  }
-}
-
-  } catch (error) {
-
-    console.error(
-      "Failed to load stations:",
-      error
-    );
-
-  } finally {
-
-    setLoading(false);
-
-  }
-}
-
-  async function scanToStation(direction) {
-
-    if (!navigator.onLine) {
-    console.log(
-      "SEEK BLOCKED: INTERNET OFFLINE"
-    );
-
-    setScanMessage("INTERNET OFFLINE");
-    setStreamHealth("OFFLINE");
-
-    return;
-  }
-
-  if (
-    scanning ||
-    stations.length === 0
-  ) {
-    return;
-  }
-
-  scanCancelRef.current = false;
-
-  setScanning(true);
-  setScanMessage("SCANNING...");
-
-  const currentIndex =
-    currentStation
-      ? stations.findIndex(
-          (station) =>
-            station.id ===
-            currentStation.id
-        )
-      : -1;
-
-  let index;
-
-  if (currentIndex === -1) {
-    index =
-      direction === "next"
-        ? 0
-        : stations.length - 1;
-  } else {
-    index =
-      direction === "next"
-        ? currentIndex + 1
-        : currentIndex - 1;
-  }
-
-  while (
-    index >= 0 &&
-    index < stations.length
-  ) {
-
-    if (scanCancelRef.current) {
-      console.log("SCAN CANCELLED");
-      setScanMessage("SCAN CANCELLED");
-      setScanning(false);
-
-      return;
-    }
-
-    const station = stations[index];
-    const frequency = getStationFrequency(station);
-
-    setScanMessage(
-  frequency !== null
-    ? `TESTING ${frequency.toFixed(1)} FM`
-    : `TESTING ${station.name}`
-);
-    console.log(
-      "Scanning station:",
-      station.name
-    );
-
-    const playable = await testStation(station);
-
-    if (playable) {
       console.log(
-        "LOCKED:",
-        station.name
+        "Station count:",
+        data.length
       );
 
-      // setCurrentStation(station);
-
-      setScanMessage("LOCKED");
-
-      try {
-        // await audioRef.current.play();
-
-        // setPlaying(true);
-      } catch (error) {
-        console.error(
-          "Could not start locked station:",
-          error
+      const normalizedStations =
+        data.map((station) =>
+          normalizeStation(
+            station,
+            latitude,
+            longitude
+          )
         );
-      }
-
-      setScanning(false);
-      await playStation(station);
-
-      scanIndexRef.current = null;
-      scanDirectionRef.current = null;
-
-      return;
-    }
-
-    console.log(
-      "SKIP:",
-      station.name
-    );
-
-    index =
-      direction === "next"
-        ? index + 1
-        : index - 1;
-  }
-
-  console.log(
-    "No playable stations found."
-  );
-
-  setScanMessage(
-    "NO PLAYABLE STATION"
-  );
-
-  setScanning(false);
-  scanIndexRef.current = null;
-  scanDirectionRef.current = null;
-}
-
-function testStation(station) {
-  return new Promise((resolve) => {
-
-    if (!navigator.onLine) {
-      console.log(
-        "TEST BLOCKED: INTERNET OFFLINE"
-      );
-
-      resolve(false);
-      return;
-    }
-
-    if (
-      scanCancelRef.current ||
-      !station?.streamUrl
-    ) {
-      resolve(false);
-      return;
-    }
-
-    // IMPORTANT:
-    // This is a temporary audio player.
-    // It does NOT touch the real radio player.
-    const audio = new Audio();
-
-    scanAudioRef.current = audio;
-
-    let finished = false;
-
-    let timeout;
-
-    const cleanup = () => {
-
-      audio.removeEventListener(
-        "canplay",
-        handleSuccess
-      );
-
-      audio.removeEventListener(
-        "playing",
-        handleSuccess
-      );
-
-      audio.removeEventListener(
-        "error",
-        handleFailure
-      );
-
-      clearTimeout(timeout);
-
-      audio.pause();
-
-      audio.src = "";
 
       if (
-        scanAudioRef.current === audio
+        latitude !== null &&
+        longitude !== null
       ) {
-        scanAudioRef.current = null;
-      }
-    };
+        normalizedStations.sort(
+          (a, b) => {
+            if (
+              a.distance === null
+            ) {
+              return 1;
+            }
 
-    const finish = (success) => {
+            if (
+              b.distance === null
+            ) {
+              return -1;
+            }
 
-      if (finished) {
-        return;
-      }
-
-      finished = true;
-
-      cleanup();
-
-      resolve(success);
-    };
-
-    const handleSuccess = () => {
-
-      // If user cancelled while
-      // the station was loading,
-      // don't lock onto it.
-      if (scanCancelRef.current) {
-        finish(false);
-        return;
+            return (
+              a.distance -
+              b.distance
+            );
+          }
+        );
       }
 
-      console.log(
-        "TEST SUCCESS:",
-        station.name
+      /*
+       * Update favorites with fresh
+       * station metadata.
+       */
+      setFavorites(
+        (previousFavorites) =>
+          previousFavorites.map(
+            (favorite) => {
+              const freshStation =
+                normalizedStations.find(
+                  (station) =>
+                    station.id ===
+                    favorite.id
+                );
+
+              if (!freshStation) {
+                return favorite;
+              }
+
+              return {
+                ...favorite,
+                ...freshStation,
+              };
+            }
+          )
       );
 
-      finish(true);
-    };
+      /*
+       * Update presets.
+       */
+      setPresets(
+        (previousPresets) =>
+          previousPresets.map(
+            (preset) => {
+              if (!preset) {
+                return null;
+              }
 
-    const handleFailure = () => {
+              const freshStation =
+                normalizedStations.find(
+                  (station) =>
+                    station.id ===
+                    preset.id
+                );
 
-      console.log(
-        "TEST FAILED:",
-        station.name
+              if (!freshStation) {
+                return preset;
+              }
+
+              return {
+                ...preset,
+                ...freshStation,
+              };
+            }
+          )
       );
 
-      finish(false);
-    };
-
-    timeout = setTimeout(() => {
-
-      console.log(
-        "TEST TIMEOUT:",
-        station.name
+      setStations(
+        normalizedStations
       );
 
-      finish(false);
+      // const stationsWithRegion =
+      //   normalizedStations.filter(
+      //     (station) =>
+      //       station.state &&
+      //       station.state.trim() !== ""
+      //   );
 
-    }, 5000);
+        
 
-    audio.addEventListener(
-      "canplay",
-      handleSuccess
+      // setRegionStations(
+      //   stationsWithRegion
+      // );
+
+
+      if (
+  latitude === null &&
+  longitude === null
+) {
+  const stationsWithRegion =
+    normalizedStations.filter(
+      (station) =>
+        station.state &&
+        station.state.trim() !== ""
     );
 
-    audio.addEventListener(
-      "playing",
-      handleSuccess
-    );
-
-    audio.addEventListener(
-      "error",
-      handleFailure
-    );
-
-    audio.src =
-      station.streamUrl;
-
-    audio.load();
-
-    audio.play().catch(() => {
-
-      finish(false);
-
-    });
-  });
+  setRegionStations(
+    stationsWithRegion
+  );
 }
 
-  function normalizeStation(station, userLatitude = null, userLongitude = null) {
-    
-  let distance = null;
+      if (
+        normalizedStations.length > 0
+      ) {
+        const savedStationId =
+          localStorage.getItem(
+            "retroRadioLastStationId"
+          );
 
-  if (
-    station.geo_lat !== null &&
-    station.geo_long !== null &&
-    userLatitude !== null &&
-    userLongitude !== null
+        const savedStation =
+          savedStationId
+            ? normalizedStations.find(
+                (station) =>
+                  station.id ===
+                  savedStationId
+              )
+            : null;
+
+        const stationToRestore =
+          savedStation ||
+          normalizedStations[0];
+
+        console.log(
+          savedStation
+            ? "RESTORING LAST STATION:"
+            : "NO SAVED STATION — USING FIRST STATION:",
+          stationToRestore.name
+        );
+
+        setCurrentStation(
+          stationToRestore
+        );
+
+        setLastStationId(
+          stationToRestore.id
+        );
+
+        /*
+         * Prepare the source but DO NOT PLAY.
+         */
+        const audio =
+          audioRef.current;
+
+        if (audio) {
+          internalAudioChangeRef.current =
+            true;
+
+          ++playbackRequestRef.current;
+
+          audio.pause();
+
+          audio.src =
+            stationToRestore.streamUrl;
+
+          audioStationIdRef.current =
+            stationToRestore.id;
+
+          audio.load();
+
+          internalAudioChangeRef.current =
+            false;
+        }
+
+        setPlaying(false);
+
+        const frequency =
+          getStationFrequency(
+            stationToRestore
+          );
+
+        if (frequency !== null) {
+          setTunerFrequency(
+            frequency
+          );
+
+          setDisplayFrequency(
+            frequency
+          );
+        } else {
+          setTunerFrequency(null);
+        }
+      }
+    } catch (error) {
+      console.error(
+        "Failed to load stations:",
+        error
+      );
+    } finally {
+      if (
+        requestId ===
+        stationLoadRequestRef.current
+      ) {
+        setLoading(false);
+      }
+    }
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * LOAD REGION STATIONS
+   * ---------------------------------------------------------
+   */
+
+  async function loadRegionStations() {
+    try {
+      const params =
+        new URLSearchParams({
+          hidebroken: "true",
+          has_geo_info: "false",
+          order: "votes",
+          reverse: "true",
+          limit: "100",
+          country: "India",
+        });
+
+      const requestUrl =
+        `${API}?${params}`;
+
+      console.log(
+        "REGION REQUEST:",
+        requestUrl
+      );
+
+      const response =
+        await fetch(requestUrl);
+
+      const data =
+        await response.json();
+
+      console.log(
+        "Region station count:",
+        data.length
+      );
+
+      const normalizedStations =
+        data.map((station) =>
+          normalizeStation(
+            station,
+            null,
+            null
+          )
+        );
+
+      setRegionStations(
+        normalizedStations
+      );
+    } catch (error) {
+      console.error(
+        "Failed to load region stations:",
+        error
+      );
+    }
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * SCAN
+   * ---------------------------------------------------------
+   */
+
+  async function scanToStation(
+    direction
   ) {
-    distance = calculateDistance(
-      userLatitude,
-      userLongitude,
-      station.geo_lat,
-      station.geo_long
+    if (!navigator.onLine) {
+      console.log(
+        "SEEK BLOCKED: INTERNET OFFLINE"
+      );
+
+      setScanMessage(
+        "INTERNET OFFLINE"
+      );
+
+      setStreamHealth(
+        "OFFLINE"
+      );
+
+      return;
+    }
+
+    const activeStations =
+      getActiveStationList();
+
+    console.log(
+      "SEEK ACTIVE LIST:",
+      {
+        filter: stationFilter,
+        selectedRegion,
+        count:
+          activeStations.length,
+        stations:
+          activeStations.map(
+            (station) =>
+              station.name
+          ),
+      }
+    );
+
+    if (
+      scanning ||
+      activeStations.length === 0
+    ) {
+      return;
+    }
+
+    scanCancelRef.current =
+      false;
+
+    /*
+     * Cancel recovery while seeking.
+     */
+    playbackRequestRef.current += 1;
+
+    if (
+      recoveryTimerRef.current
+    ) {
+      clearTimeout(
+        recoveryTimerRef.current
+      );
+
+      recoveryTimerRef.current =
+        null;
+    }
+
+    recoveryRunningRef.current =
+      false;
+
+    failoverRef.current = false;
+
+    setRecovering(false);
+    setAutoFailover(false);
+
+    setScanning(true);
+    setScanMessage(
+      "SCANNING..."
+    );
+
+    const currentIndex =
+      currentStation
+        ? activeStations.findIndex(
+            (station) =>
+              station.id ===
+              currentStation.id
+          )
+        : -1;
+
+    let index;
+
+    if (currentIndex === -1) {
+      index =
+        direction === "next"
+          ? 0
+          : activeStations.length - 1;
+    } else {
+      index =
+        direction === "next"
+          ? currentIndex + 1
+          : currentIndex - 1;
+    }
+
+    while (
+      index >= 0 &&
+      index < activeStations.length
+    ) {
+      if (
+        scanCancelRef.current
+      ) {
+        console.log(
+          "SCAN CANCELLED"
+        );
+
+        setScanMessage(
+          "SCAN CANCELLED"
+        );
+
+        setScanning(false);
+
+        return;
+      }
+
+      if (!navigator.onLine) {
+        setScanning(false);
+        setScanMessage(
+          "INTERNET OFFLINE"
+        );
+        return;
+      }
+
+      const station =
+        activeStations[index];
+
+      const frequency =
+        getStationFrequency(
+          station
+        );
+
+      setScanMessage(
+        frequency !== null
+          ? `TESTING ${frequency.toFixed(
+              1
+            )} FM`
+          : `TESTING ${station.name}`
+      );
+
+      console.log(
+        "Scanning station:",
+        station.name
+      );
+
+      const playable =
+        await testStation(
+          station
+        );
+
+      if (playable) {
+        console.log(
+          "LOCKED:",
+          station.name
+        );
+
+        setScanMessage(
+          "LOCKED"
+        );
+
+        setScanning(false);
+
+        await playStation(
+          station
+        );
+
+        scanIndexRef.current =
+          null;
+
+        scanDirectionRef.current =
+          null;
+
+        return;
+      }
+
+      console.log(
+        "SKIP:",
+        station.name
+      );
+
+      index =
+        direction === "next"
+          ? index + 1
+          : index - 1;
+    }
+
+    console.log(
+      "No playable stations found."
+    );
+
+    setScanMessage(
+      "NO PLAYABLE STATION"
+    );
+
+    setScanning(false);
+
+    scanIndexRef.current =
+      null;
+
+    scanDirectionRef.current =
+      null;
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * TEST STATION
+   * ---------------------------------------------------------
+   */
+
+  function testStation(station) {
+    return new Promise(
+      (resolve) => {
+        if (!navigator.onLine) {
+          console.log(
+            "TEST BLOCKED: INTERNET OFFLINE"
+          );
+
+          resolve(false);
+          return;
+        }
+
+        if (
+          scanCancelRef.current ||
+          !station?.streamUrl
+        ) {
+          resolve(false);
+          return;
+        }
+
+        const audio =
+          new Audio();
+
+        scanAudioRef.current =
+          audio;
+
+        let finished = false;
+
+        let timeout;
+
+        const cleanup = () => {
+          audio.removeEventListener(
+            "canplay",
+            handleSuccess
+          );
+
+          audio.removeEventListener(
+            "playing",
+            handleSuccess
+          );
+
+          audio.removeEventListener(
+            "error",
+            handleFailure
+          );
+
+          clearTimeout(timeout);
+
+          audio.pause();
+          audio.src = "";
+
+          if (
+            scanAudioRef.current ===
+            audio
+          ) {
+            scanAudioRef.current =
+              null;
+          }
+        };
+
+        const finish = (
+          success
+        ) => {
+          if (finished) {
+            return;
+          }
+
+          finished = true;
+
+          setStationHealth(
+            (previous) => ({
+              ...previous,
+              [station.id]:
+                success
+                  ? "healthy"
+                  : "unhealthy",
+            })
+          );
+
+          cleanup();
+
+          resolve(success);
+        };
+
+        const handleSuccess = () => {
+          if (
+            scanCancelRef.current
+          ) {
+            finish(false);
+            return;
+          }
+
+          console.log(
+            "TEST SUCCESS:",
+            station.name
+          );
+
+          finish(true);
+        };
+
+        const handleFailure = () => {
+          console.log(
+            "TEST FAILURE:",
+            station.name
+          );
+
+          failedStationsRef.current.add(
+            station.id
+          );
+
+          finish(false);
+        };
+
+        timeout = setTimeout(
+          () => {
+            console.log(
+              "TEST TIMEOUT:",
+              station.name
+            );
+
+            finish(false);
+          },
+          STATION_HEALTH_CONFIG.testTimeout
+        );
+
+        audio.addEventListener(
+          "canplay",
+          handleSuccess
+        );
+
+        audio.addEventListener(
+          "playing",
+          handleSuccess
+        );
+
+        audio.addEventListener(
+          "error",
+          handleFailure
+        );
+
+        audio.src =
+          station.streamUrl;
+
+        audio.load();
+
+        audio
+          .play()
+          .catch((error) => {
+            /*
+             * AbortError during test simply
+             * means the test was cancelled.
+             */
+            if (
+              error?.name !==
+              "AbortError"
+            ) {
+              console.log(
+                "TEST PLAY FAILED:",
+                station.name,
+                error
+              );
+            }
+
+            finish(false);
+          });
+      }
     );
   }
 
-  // Normalize frequency safely.
-  // Radio Browser can sometimes return:
-  // number, string, empty string, null, etc.
-  const rawFrequency =
-    station.frequency ??
-    station.name?.match(
-    /\b(8[8-9](?:\.\d+)?|9\d(?:\.\d+)?|10[0-7](?:\.\d+)?)\s*(?:FM)?\b/i
-    )?.[1] ??
-    null;
+  /*
+   * ---------------------------------------------------------
+   * NORMALIZE STATION
+   * ---------------------------------------------------------
+   */
 
-  const parsedFrequency = Number(
-    rawFrequency
-  );
+  function normalizeStation(
+    station,
+    userLatitude = null,
+    userLongitude = null
+  ) {
+    let distance = null;
 
-  const frequency =
-    Number.isFinite(parsedFrequency) &&
-    parsedFrequency >= 88 &&
-    parsedFrequency <= 108
-    ? parsedFrequency
-    : null;
+    if (
+      station.geo_lat !== null &&
+      station.geo_long !== null &&
+      userLatitude !== null &&
+      userLongitude !== null
+    ) {
+      distance =
+        calculateDistance(
+          userLatitude,
+          userLongitude,
+          station.geo_lat,
+          station.geo_long
+        );
+    }
 
-  // console.log(
-  // "STATION FREQUENCY DEBUG:",
-  // station.name,
-  // "API frequency:",
-  // station.frequency,
-  // "Parsed:",
-  // frequency
-  // );
+    const rawFrequency =
+      station.frequency ??
+      station.name?.match(
+        /\b(8[8-9](?:\.\d+)?|9\d(?:\.\d+)?|10[0-7](?:\.\d+)?)\s*(?:FM)?\b/i
+      )?.[1] ??
+      null;
 
-//   console.log(
-//   "STATION METADATA:",
-//   station.name,
-//   {
-//     homepage: station.homepage,
-//     tags: station.tags,
-//     codec: station.codec,
-//     bitrate: station.bitrate,
-//     streamUrl: station.url_resolved || station.url
-//   }
-// );
+    const parsedFrequency =
+      Number(rawFrequency);
 
-  return {
-    id: station.stationuuid,
+    const frequency =
+      Number.isFinite(
+        parsedFrequency
+      ) &&
+      parsedFrequency >= 88 &&
+      parsedFrequency <= 108
+        ? parsedFrequency
+        : null;
 
-    name: station.name,
+    return {
+      id: station.stationuuid,
 
-    country: station.country,
+      name: station.name,
 
-    state: station.state,
+      country: station.country,
 
-    language: station.language,
+      state: station.state,
 
-    codec: station.codec,
+      language: station.language,
 
-    bitrate: station.bitrate,
+      codec: station.codec,
 
-    streamUrl:
-      station.url_resolved ||
-      station.url,
+      bitrate: station.bitrate,
 
-    favicon:
-      station.favicon ||
-      null,
+      streamUrl:
+        station.url_resolved ||
+        station.url,
 
-    homepage:
-      station.homepage ||
-      null,
+      favicon:
+        station.favicon ||
+        null,
 
-    tags:
-      station.tags ||
-      "",
+      homepage:
+        station.homepage ||
+        null,
 
-    frequency,
+      tags:
+        station.tags ||
+        "",
 
-    type:
-      frequency !== null
-        ? "FM"
-        : "DIGITAL",
+      frequency,
 
-    latitude:
-      station.geo_lat,
+      type:
+        frequency !== null
+          ? "FM"
+          : "DIGITAL",
 
-    longitude:
-      station.geo_long,
+      latitude:
+        station.geo_lat,
 
-    distance,
-  };
+      longitude:
+        station.geo_long,
 
-}
+      distance,
+    };
+  }
 
-  async function getLocationName(latitude, longitude) {
+  /*
+   * ---------------------------------------------------------
+   * LOCATION
+   * ---------------------------------------------------------
+   */
+
+  async function getLocationName(
+    latitude,
+    longitude
+  ) {
     try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
-      );
+      const response =
+        await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
-      const address = data.address;
+      const address =
+        data.address;
 
       const city =
         address.city ||
@@ -1541,12 +2455,18 @@ function testStation(station) {
         address.county ||
         "Unknown";
 
-      const state = address.state || "";
+      const state =
+        address.state || "";
 
-      const country = address.country || "";
+      const country =
+        address.country || "";
 
       setLocationName(
-        [city, state, country]
+        [
+          city,
+          state,
+          country,
+        ]
           .filter(Boolean)
           .join(", ")
       );
@@ -1559,56 +2479,122 @@ function testStation(station) {
   }
 
   function stopScanning() {
-    failoverRef.current = false;
+    failoverRef.current =
+      false;
+
     setAutoFailover(false);
 
-  console.log("STOPPING SCAN");
+    console.log(
+      "STOPPING SCAN"
+    );
 
-  scanCancelRef.current = true;
+    scanCancelRef.current =
+      true;
 
-  // Kill only the temporary scanner audio
-  if (scanAudioRef.current) {
+    if (scanAudioRef.current) {
+      scanAudioRef.current.pause();
 
-    scanAudioRef.current.pause();
+      scanAudioRef.current.src =
+        "";
 
-    scanAudioRef.current.src = "";
+      scanAudioRef.current =
+        null;
+    }
 
-    scanAudioRef.current = null;
+    setScanning(false);
+
+    setScanMessage(
+      "SCAN CANCELLED"
+    );
+
+    scanIndexRef.current =
+      null;
+
+    scanDirectionRef.current =
+      null;
   }
 
-  setScanning(false);
+  /*
+   * ---------------------------------------------------------
+   * STOP PLAYBACK
+   * ---------------------------------------------------------
+   */
 
-  setScanMessage(
-    "SCAN CANCELLED"
-  );
+  function stopCurrentPlayback() {
+    const audio =
+      audioRef.current;
 
-  scanIndexRef.current = null;
-  scanDirectionRef.current = null;
-}
+    /*
+     * Invalidate every pending play()
+     * immediately.
+     */
+    playbackRequestRef.current +=
+      1;
 
-function stopCurrentPlayback() {
-  const audio = audioRef.current;
+    recoveryStationIdRef.current =
+      null;
 
-  if (audio) {
-    audio.pause();
+    recoveryRunningRef.current =
+      false;
 
-    audio.removeAttribute("src");
-    audio.load();
+    errorRecoveryPendingRef.current =
+      false;
+
+    if (
+      recoveryTimerRef.current
+    ) {
+      clearTimeout(
+        recoveryTimerRef.current
+      );
+
+      recoveryTimerRef.current =
+        null;
+    }
+
+    if (audio) {
+      internalAudioChangeRef.current =
+        true;
+
+      audio.pause();
+
+      audio.removeAttribute(
+        "src"
+      );
+
+      audio.load();
+
+      audioStationIdRef.current =
+        null;
+
+      internalAudioChangeRef.current =
+        false;
+    }
+
+    setPlaying(false);
+    setRecovering(false);
+    setSignalLevel(0);
+
+    if (navigator.onLine) {
+      setStreamHealth("READY");
+    }
   }
 
-  setPlaying(false);
-}
+  /*
+   * ---------------------------------------------------------
+   * GEOLOCATION
+   * ---------------------------------------------------------
+   */
 
   function getMyLocation() {
     stopScanning();
-    // Stop current radio playback
-    // before changing location.
+
     stopCurrentPlayback();
 
     if (!navigator.geolocation) {
       alert(
         "Geolocation is not supported by your browser."
       );
+
       return;
     }
 
@@ -1616,24 +2602,37 @@ function stopCurrentPlayback() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const { latitude, longitude } =
-          position.coords;
+        const {
+          latitude,
+          longitude,
+        } = position.coords;
 
         setLocation({
           latitude,
           longitude,
         });
 
-        setLocationName("Finding location...");
+        setLocationName(
+          "Finding location..."
+        );
 
-        getLocationName(latitude, longitude);
+        getLocationName(
+          latitude,
+          longitude
+        );
 
-        loadStations(latitude, longitude);
+        loadStations(
+          latitude,
+          longitude
+        );
 
         setLocationLoading(false);
       },
       (error) => {
-        console.error("Location error:", error);
+        console.error(
+          "Location error:",
+          error
+        );
 
         setLocationLoading(false);
 
@@ -1644,24 +2643,9 @@ function stopCurrentPlayback() {
     );
   }
 
-  function getStationTags(station) {
-  if (!station?.tags) {
-    return "";
-  }
-
-  return station.tags
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .map((tag) => tag.toUpperCase())
-    .join(" • ");
-}
-
   async function searchCustomLocation() {
     stopScanning();
-    // Stop current radio playback
-    // before changing location.
+
     stopCurrentPlayback();
 
     if (!searchLocation.trim()) {
@@ -1669,132 +2653,226 @@ function stopCurrentPlayback() {
     }
 
     try {
-      setSearchingLocation(true);
-
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          searchLocation
-        )}&limit=1`
+      setSearchingLocation(
+        true
       );
 
-      const data = await response.json();
+      const response =
+        await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+            searchLocation
+          )}&limit=1`
+        );
+
+      const data =
+        await response.json();
 
       if (data.length === 0) {
-        alert("Location not found.");
+        alert(
+          "Location not found."
+        );
+
         return;
       }
 
-      const result = data[0];
+      const result =
+        data[0];
 
-      const latitude = parseFloat(result.lat);
-      const longitude = parseFloat(result.lon);
+      const latitude =
+        parseFloat(result.lat);
+
+      const longitude =
+        parseFloat(result.lon);
 
       setLocation({
         latitude,
         longitude,
       });
 
-      setLocationName(result.display_name);
+      setLocationName(
+        result.display_name
+      );
 
-      await loadStations(latitude, longitude);
+      await loadStations(
+        latitude,
+        longitude
+      );
     } catch (error) {
       console.error(
         "Location search failed:",
         error
       );
 
-      alert("Unable to find that location.");
+      alert(
+        "Unable to find that location."
+      );
     } finally {
-      setSearchingLocation(false);
+      setSearchingLocation(
+        false
+      );
     }
   }
 
-  function getStationType(station) {
-  if (!station) {
-    return "RADIO";
+  /*
+   * ---------------------------------------------------------
+   * DISTANCE
+   * ---------------------------------------------------------
+   */
+
+  function calculateDistance(
+    lat1,
+    lon1,
+    lat2,
+    lon2
+  ) {
+    const earthRadius = 6371;
+
+    const dLat =
+      ((lat2 - lat1) *
+        Math.PI) /
+      180;
+
+    const dLon =
+      ((lon2 - lon1) *
+        Math.PI) /
+      180;
+
+    const a =
+      Math.sin(dLat / 2) **
+        2 +
+      Math.cos(
+        (lat1 * Math.PI) /
+          180
+      ) *
+        Math.cos(
+          (lat2 * Math.PI) /
+            180
+        ) *
+        Math.sin(dLon / 2) **
+          2;
+
+    const c =
+      2 *
+      Math.atan2(
+        Math.sqrt(a),
+        Math.sqrt(1 - a)
+      );
+
+    return earthRadius * c;
   }
 
-  const frequency =
-    getStationFrequency(station);
+  /*
+   * ---------------------------------------------------------
+   * SKIP FAILED STATION
+   * ---------------------------------------------------------
+   */
 
-  if (frequency !== null) {
-    return `${frequency.toFixed(1)} FM`;
-  }
+  async function skipFailedStation(station) {
+  console.log(
+    "========== SKIP FAILED STATION =========="
+  );
 
-  return "DIGITAL";
-}
+  const activeStations =
+    getActiveStationList();
 
-function getStationDistance(station) {
-  if (!station || station.distance === null) {
-    return "DISTANCE N/A";
-  }
+  console.log(
+    "FAILED STATION:",
+    station?.name
+  );
 
-  return `${station.distance.toFixed(1)} KM`;
-}
-
-function calculateDistance(
-  lat1,
-  lon1,
-  lat2,
-  lon2
-) {
-  const earthRadius = 6371;
-
-  const dLat =
-    ((lat2 - lat1) * Math.PI) / 180;
-
-  const dLon =
-    ((lon2 - lon1) * Math.PI) / 180;
-
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-
-  const c =
-    2 * Math.atan2(
-      Math.sqrt(a),
-      Math.sqrt(1 - a)
-    );
-
-  return earthRadius * c;
-}
-
-async function skipFailedStation(station) {
   if (
     !station ||
-    stations.length === 0
+    activeStations.length === 0
   ) {
+    setPlaying(false);
+    setScanMessage(
+      "NO PLAYABLE STATION"
+    );
+
     return;
   }
 
-  console.log(
-    "SKIPPING UNPLAYABLE STATION:",
-    station.name
-  );
-
   const currentIndex =
-    stations.findIndex(
+    activeStations.findIndex(
       (availableStation) =>
-        availableStation.id === station.id
+        availableStation.id ===
+        station.id
     );
 
   if (currentIndex === -1) {
+    console.log(
+      "FAILED STATION NOT FOUND IN ACTIVE LIST"
+    );
+
     setPlaying(false);
-    setScanMessage("NO PLAYABLE STATION");
+    setScanMessage(
+      "NO PLAYABLE STATION"
+    );
+
     return;
   }
 
-  let index = currentIndex + 1;
+  /*
+   * -------------------------------------------------------
+   * CIRCULAR SEARCH
+   * -------------------------------------------------------
+   *
+   * Start from the station after the failed station.
+   *
+   * Wrap around to the beginning when we reach
+   * the end of the active list.
+   *
+   * Every station is tested at most once.
+   * -------------------------------------------------------
+   */
 
-  while (index < stations.length) {
+  const testedStationIds =
+    new Set();
+
+  for (
+    let offset = 1;
+    offset < activeStations.length;
+    offset++
+  ) {
+    /*
+     * Circular index.
+     *
+     * Example:
+     *
+     * current = 4
+     * length  = 6
+     *
+     * offset 1 → 5
+     * offset 2 → 0
+     * offset 3 → 1
+     * ...
+     */
+    const nextIndex =
+      (currentIndex + offset) %
+      activeStations.length;
 
     const nextStation =
-      stations[index];
+      activeStations[nextIndex];
+
+    /*
+     * Safety protection against duplicates.
+     */
+    if (
+      testedStationIds.has(
+        nextStation.id
+      )
+    ) {
+      continue;
+    }
+
+    testedStationIds.add(
+      nextStation.id
+    );
 
     console.log(
-      "TESTING NEXT STATION:",
+      `TRY ${offset}/${
+        activeStations.length - 1
+      }:`,
       nextStation.name
     );
 
@@ -1803,18 +2881,23 @@ async function skipFailedStation(station) {
     );
 
     const playable =
-      await testStation(nextStation);
+      await testStation(
+        nextStation
+      );
 
     if (playable) {
-
       console.log(
-        "NEXT STATION LOCKED:",
+        "NEXT PLAYABLE STATION FOUND:",
         nextStation.name
       );
 
-      setScanMessage("LOCKED");
+      setScanMessage(
+        "LOCKED"
+      );
 
-      await playStation(nextStation);
+      await playStation(
+        nextStation
+      );
 
       return;
     }
@@ -1823,12 +2906,16 @@ async function skipFailedStation(station) {
       "NEXT STATION FAILED:",
       nextStation.name
     );
-
-    index++;
   }
 
+  /*
+   * -------------------------------------------------------
+   * ALL STATIONS FAILED
+   * -------------------------------------------------------
+   */
+
   console.log(
-    "NO PLAYABLE STATION AFTER FAILED STATION"
+    "NO PLAYABLE STATION IN ACTIVE LIST"
   );
 
   setPlaying(false);
@@ -1838,349 +2925,827 @@ async function skipFailedStation(station) {
   );
 }
 
-async function playStation(station) {
-  console.count("playStation CALLED");
+  /*
+   * =========================================================
+   * PLAY STATION
+   * =========================================================
+   *
+   * THIS IS THE MAIN FIX.
+   *
+   * We now:
+   *
+   * 1. Invalidate old play() promises.
+   * 2. Cancel recovery.
+   * 3. Mark internal pause/source changes.
+   * 4. Never treat AbortError as a bad stream.
+   * 5. Verify the request is still current after
+   *    await audio.play().
+   * 6. Don't reload an already-correct source unnecessarily.
+   * =========================================================
+   */
 
-  manuallyPausedRef.current = false;
-  recoveryStationIdRef.current = null;
-
-    if (recoveryTimerRef.current) {
-    clearTimeout(
-      recoveryTimerRef.current
-    );
-
-    recoveryTimerRef.current = null;
-  }
-
-  recoveryAttemptRef.current = 0;
-  failoverRef.current = false;
-  setRecovering(false);
-  setAutoFailover(false);
-
-  const freshStation =
-  stations.find(
-    (availableStation) =>
-      availableStation.id === station.id
-  );
-
-  if (freshStation) {
-    station = {
-      ...station,
-      ...freshStation,
-    };
-  }
-
-  if (!station?.streamUrl) {
-    console.error(
-      "Station has no stream URL:",
-      station
-    );
-
-    return;
-  }
-
-  const audio =
-    audioRef.current;
-
-  if (!audio) {
-    return;
-  }
-
-  console.log(
-    "================================"
-  );
-
-  console.log(
-    "PLAY STATION"
-  );
-
-  console.log(
-    "Name:",
-    station.name
-  );
-
-  console.log(
-    "URL:",
-    station.streamUrl
-  );
-
-  console.log(
-    "Codec:",
-    station.codec
-  );
-
-  console.log(
-    "Bitrate:",
-    station.bitrate
-  );
-
-  console.log(
-    "================================"
-  );
-
-  setCurrentStation(station);
-
-  localStorage.setItem(
-  "retroRadioLastStationId",
-  station.id
-  );
-
-  setLastStationId(station.id);
-
-  const frequency =
-  getStationFrequency(station);
-
-  if (frequency !== null) {
-  animateTunerTo(frequency);
-  }
-
-  try {
-
-  audio.pause();
-
-  audio.src =
-    station.streamUrl;
-
-  audio.load();
-
-  await audio.play();
-
-  setPlaying(true);
-
-  console.log(
-    "PLAYING:",
-    station.name
-  );
-
-} catch (error) {
-
-  setPlaying(false);
-
-  console.error(
-    "PLAY FAILED:",
-    error
-  );
-
-  console.error(
-    "Stream URL:",
-    station.streamUrl
-  );
-
-  // --------------------------------
-  // PERMANENTLY UNPLAYABLE STREAM
-  // --------------------------------
-
-  if (
-    isUnplayableStream(
-      audio,
-      error
-    )
+  async function playStation(
+    station
   ) {
-
-    console.warn(
-      "UNPLAYABLE STREAM — SKIPPING:",
-      station.name
+    console.count(
+      "playStation CALLED"
     );
 
-    // Give the audio element a
-    // clean state before testing
-    // another station.
-    audio.pause();
+    if (!station?.streamUrl) {
+      console.error(
+        "Station has no stream URL:",
+        station
+      );
 
-    audio.removeAttribute("src");
-
-    audio.load();
-
-    await skipFailedStation(
-      station
-    );
-
-    return;
-  }
-
-  // --------------------------------
-  // TEMPORARY FAILURE
-  // --------------------------------
-
-  console.log(
-    "TEMPORARY PLAYBACK FAILURE — RECOVERY"
-  );
-
-  if (!scanning) {
-    recoverCurrentStation();
-  }
-}
-}
-
-  async function togglePlay() {
-
-  // SEEK is running → PLAY button becomes CANCEL
-  if (scanning) {
-    stopScanning();
-    return;
-  }
-
-  const audio = audioRef.current;
-
-  if (!audio) {
-    return;
-  }
-
-  // No current station → play first station
-  if (!currentStation) {
-
-    if (stations.length === 0) {
       return;
     }
 
-    await playStation(stations[0]);
-    return;
-  }
+    if (!navigator.onLine) {
+      console.log(
+        "PLAY BLOCKED: INTERNET OFFLINE"
+      );
 
-  // ==============================
-  // PAUSE
-  // ==============================
+      setStreamHealth(
+        "OFFLINE"
+      );
 
-  if (!audio.paused) {
+      setScanMessage(
+        "INTERNET OFFLINE"
+      );
 
-  audio.pause();
+      return;
+    }
 
-  manuallyPausedRef.current = true;
-  wasPlayingBeforeOfflineRef.current = false;
+    /*
+     * -------------------------------------------------------
+     * GET FRESH STATION
+     * -------------------------------------------------------
+     */
 
-  // Cancel any pending recovery.
-  if (recoveryTimerRef.current) {
-    clearTimeout(
+    const freshStation =
+      stations.find(
+        (availableStation) =>
+          availableStation.id ===
+          station.id
+      );
+
+    if (freshStation) {
+      station = {
+        ...station,
+        ...freshStation,
+      };
+    }
+
+    /*
+     * -------------------------------------------------------
+     * NEW PLAYBACK REQUEST
+     * -------------------------------------------------------
+     */
+
+    const requestId =
+      ++playbackRequestRef.current;
+
+    manuallyPausedRef.current =
+      false;
+
+    recoveryStationIdRef.current =
+      null;
+
+    errorRecoveryPendingRef.current =
+      false;
+
+    failoverRef.current =
+      false;
+
+    recoveryRunningRef.current =
+      false;
+
+    if (
       recoveryTimerRef.current
-    );
+    ) {
+      clearTimeout(
+        recoveryTimerRef.current
+      );
 
-    recoveryTimerRef.current = null;
-  }
+      recoveryTimerRef.current =
+        null;
+    }
 
-  recoveryAttemptRef.current = 0;
-  recoveryStationIdRef.current = null;
+    recoveryAttemptRef.current =
+      0;
 
-  setRecovering(false);
-  setPlaying(false);
-  setSignalLevel(0);
-  setStreamHealth("PAUSED");
-  setScanMessage("");
+    setRecovering(false);
+    setAutoFailover(false);
 
-  return;
-  }
+    const audio =
+      audioRef.current;
 
-  // ==============================
-  // PLAY
-  // ==============================
-
-  manuallyPausedRef.current = false;
-
-  // Always make sure the audio element
-  // points to the currently selected station.
-  if (
-    !audio.src ||
-    audio.src !== currentStation.streamUrl
-  ) {
+    if (!audio) {
+      return;
+    }
 
     console.log(
-      "SETTING CURRENT STATION SOURCE:",
-      currentStation.name
+      "================================"
     );
-
-    audio.pause();
-
-    audio.src = currentStation.streamUrl;
-
-    audio.load();
-  }
-
-  try {
-
-    await audio.play();
-
-    setPlaying(true);
 
     console.log(
-      "PLAYING:",
-      currentStation.name
+      "PLAY STATION"
     );
 
-  } catch (error) {
-
-    console.error(
-      "PLAY BUTTON FAILED:",
-      error
+    console.log(
+      "Name:",
+      station.name
     );
+
+    console.log(
+      "URL:",
+      station.streamUrl
+    );
+
+    console.log(
+      "Codec:",
+      station.codec
+    );
+
+    console.log(
+      "Codec:",
+      station.frequency
+    );
+
+    console.log(
+      "Bitrate:",
+      station.bitrate
+    );
+
+    console.log(
+      "REQUEST ID:",
+      requestId
+    );
+
+    console.log(
+      "================================"
+    );
+
+    /*
+     * Update UI station BEFORE touching audio.
+     */
+    setCurrentStation(
+      station
+    );
+
+    localStorage.setItem(
+      "retroRadioLastStationId",
+      station.id
+    );
+
+    setLastStationId(
+      station.id
+    );
+
+    const frequency =
+      getStationFrequency(
+        station
+      );
+
+    if (frequency !== null) {
+      animateTunerTo(
+        frequency
+      );
+    }
+
+    /*
+     * -------------------------------------------------------
+     * STOP OLD AUDIO
+     * -------------------------------------------------------
+     */
+
+    internalAudioChangeRef.current =
+      true;
+
+    try {
+      audio.pause();
+
+      /*
+       * IMPORTANT:
+       *
+       * Use currentSrc because browser may
+       * normalize the URL.
+       */
+      const currentSrc =
+        audio.currentSrc ||
+        audio.src;
+
+      const sourceChanged =
+        currentSrc !==
+        station.streamUrl;
+
+      if (sourceChanged) {
+        audio.src =
+          station.streamUrl;
+
+        audioStationIdRef.current =
+          station.id;
+
+        audio.load();
+      } else {
+        /*
+         * Same station.
+         *
+         * If the audio is already loaded,
+         * don't unnecessarily reset it.
+         */
+        audioStationIdRef.current =
+          station.id;
+      }
+    } finally {
+      internalAudioChangeRef.current =
+        false;
+    }
 
     setPlaying(false);
+    setSignalLevel(0);
+    setStreamHealth(
+      "CONNECTING"
+    );
 
-    // Let the existing recovery system
-    // handle temporary stream failures.
-    if (!isUnplayableStream(audio, error)) {
-      recoverCurrentStation();
+    /*
+     * -------------------------------------------------------
+     * VERIFY REQUEST BEFORE PLAY
+     * -------------------------------------------------------
+     */
+
+    if (
+      requestId !==
+      playbackRequestRef.current
+    ) {
+      console.log(
+        "PLAY CANCELLED BEFORE PLAY(): REQUEST OBSOLETE"
+      );
+
+      return;
+    }
+
+    if (
+      currentStationId() !==
+      station.id
+    ) {
+      /*
+       * React state may not have updated yet,
+       * so this is only a secondary safety check.
+       */
+      console.log(
+        "PLAY CONTINUING: React state update pending"
+      );
+    }
+
+    try {
+      /*
+       * IMPORTANT:
+       *
+       * Do not call pause() immediately before
+       * play() here.
+       *
+       * We already handled the old source above.
+       */
+      await audio.play();
+
+      /*
+       * -----------------------------------------------------
+       * PLAY PROMISE FINISHED
+       * -----------------------------------------------------
+       *
+       * It may have completed after the user
+       * selected another station.
+       */
+
+      if (
+        requestId !==
+        playbackRequestRef.current
+      ) {
+        console.log(
+          "PLAY RESULT IGNORED: OLD REQUEST",
+          requestId
+        );
+
+        return;
+      }
+
+      if (
+        manuallyPausedRef.current
+      ) {
+        console.log(
+          "PLAY RESULT IGNORED: USER PAUSED"
+        );
+
+        return;
+      }
+
+      if (
+        !navigator.onLine
+      ) {
+        console.log(
+          "PLAY RESULT IGNORED: INTERNET OFFLINE"
+        );
+
+        return;
+      }
+
+      setStationHealth(
+        (previous) => ({
+          ...previous,
+          [station.id]:
+            "healthy",
+        })
+      );
+
+      setPlaying(true);
+
+      setRecovering(false);
+      setAutoFailover(false);
+
+      errorRecoveryPendingRef.current =
+        false;
+
+      console.log(
+        "PLAYING:",
+        station.name
+      );
+    } catch (error) {
+      /*
+       * -----------------------------------------------------
+       * ABORTERROR IS NOT A BROKEN STATION
+       * -----------------------------------------------------
+       */
+
+      if (
+        error?.name ===
+        "AbortError"
+      ) {
+        console.log(
+          "PLAY ABORTED: OLD PLAY REQUEST WAS INTERRUPTED"
+        );
+
+        /*
+         * DO NOT mark the station unhealthy.
+         *
+         * DO NOT start recovery.
+         */
+        return;
+      }
+
+      /*
+       * If another request replaced this
+       * request while play() was pending,
+       * ignore the failure.
+       */
+      if (
+        requestId !==
+        playbackRequestRef.current
+      ) {
+        console.log(
+          "PLAY FAILURE IGNORED: REQUEST OBSOLETE"
+        );
+
+        return;
+      }
+
+      if (
+        manuallyPausedRef.current
+      ) {
+        console.log(
+          "PLAY FAILURE IGNORED: USER PAUSED"
+        );
+
+        return;
+      }
+
+      console.error(
+        "PLAY FAILED:",
+        error
+      );
+
+      console.error(
+        "Stream URL:",
+        station.streamUrl
+      );
+
+      setPlaying(false);
+
+      /*
+       * -----------------------------------------------------
+       * PERMANENT FAILURE
+       * -----------------------------------------------------
+       */
+
+      if (
+        isUnplayableStream(
+          audio,
+          error
+        )
+      ) {
+        console.warn(
+          "UNPLAYABLE STREAM — SKIPPING:",
+          station.name
+        );
+
+        setStationHealth(
+          (previous) => ({
+            ...previous,
+            [station.id]:
+              "unhealthy",
+          })
+        );
+
+        internalAudioChangeRef.current =
+          true;
+
+        audio.pause();
+        audio.removeAttribute(
+          "src"
+        );
+        audio.load();
+
+        internalAudioChangeRef.current =
+          false;
+
+        await skipFailedStation(
+          station
+        );
+
+        return;
+      }
+
+      /*
+       * -----------------------------------------------------
+       * TEMPORARY FAILURE
+       * -----------------------------------------------------
+       */
+
+      console.log(
+        "TEMPORARY PLAYBACK FAILURE — RECOVERY"
+      );
+
+      if (
+        !scanning &&
+        !recoveryRunningRef.current
+      ) {
+        recoveryStationIdRef.current =
+          station.id;
+
+        recoverCurrentStation();
+      }
     }
   }
-}
+
+  /*
+   * Helper for current station ID.
+   */
+  function currentStationId() {
+    return currentStation?.id || null;
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * PLAY / PAUSE
+   * ---------------------------------------------------------
+   */
+
+  async function togglePlay() {
+    /*
+     * SEEK is running → PLAY button becomes CANCEL.
+     */
+    if (scanning) {
+      stopScanning();
+      return;
+    }
+
+    const audio =
+      audioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    /*
+     * No current station.
+     */
+    if (!currentStation) {
+      if (stations.length === 0) {
+        return;
+      }
+
+      await playStation(
+        stations[0]
+      );
+
+      return;
+    }
+
+    /*
+     * -------------------------------------------------------
+     * PAUSE
+     * -------------------------------------------------------
+     */
+
+    if (!audio.paused) {
+      /*
+       * Invalidate any pending play()
+       * promise.
+       */
+      ++playbackRequestRef.current;
+
+      manuallyPausedRef.current =
+        true;
+
+      wasPlayingBeforeOfflineRef.current =
+        false;
+
+      if (
+        recoveryTimerRef.current
+      ) {
+        clearTimeout(
+          recoveryTimerRef.current
+        );
+
+        recoveryTimerRef.current =
+          null;
+      }
+
+      recoveryRunningRef.current =
+        false;
+
+      errorRecoveryPendingRef.current =
+        false;
+
+      recoveryAttemptRef.current =
+        0;
+
+      recoveryStationIdRef.current =
+        null;
+
+      internalAudioChangeRef.current =
+        true;
+
+      audio.pause();
+
+      internalAudioChangeRef.current =
+        false;
+
+      setRecovering(false);
+      setPlaying(false);
+      setSignalLevel(0);
+      setStreamHealth("PAUSED");
+      setScanMessage("");
+
+      console.log(
+        "USER PAUSED RADIO"
+      );
+
+      return;
+    }
+
+    /*
+     * -------------------------------------------------------
+     * PLAY
+     * -------------------------------------------------------
+     */
+
+    manuallyPausedRef.current =
+      false;
+
+    /*
+     * If the audio source belongs to
+     * another station, use playStation()
+     * instead of manually manipulating it.
+     */
+    if (
+      audioStationIdRef.current !==
+      currentStation.id
+    ) {
+      await playStation(
+        currentStation
+      );
+
+      return;
+    }
+
+    /*
+     * Source missing.
+     */
+    if (
+      !audio.src &&
+      !audio.currentSrc
+    ) {
+      await playStation(
+        currentStation
+      );
+
+      return;
+    }
+
+    const requestId =
+      ++playbackRequestRef.current;
+
+    setStreamHealth(
+      "CONNECTING"
+    );
+
+    try {
+      await audio.play();
+
+      if (
+        requestId !==
+        playbackRequestRef.current
+      ) {
+        console.log(
+          "PLAY BUTTON RESULT IGNORED: OLD REQUEST"
+        );
+
+        return;
+      }
+
+      if (
+        manuallyPausedRef.current
+      ) {
+        return;
+      }
+
+      setPlaying(true);
+
+      setRecovering(false);
+
+      console.log(
+        "PLAYING:",
+        currentStation.name
+      );
+    } catch (error) {
+      if (
+        error?.name ===
+        "AbortError"
+      ) {
+        console.log(
+          "PLAY BUTTON ABORTED: REQUEST SUPERSEDED"
+        );
+
+        return;
+      }
+
+      console.error(
+        "PLAY BUTTON FAILED:",
+        error
+      );
+
+      setPlaying(false);
+
+      if (
+        isUnplayableStream(
+          audio,
+          error
+        )
+      ) {
+        await skipFailedStation(
+          currentStation
+        );
+
+        return;
+      }
+
+      if (
+        !manuallyPausedRef.current
+      ) {
+        recoveryStationIdRef.current =
+          currentStation.id;
+
+        recoverCurrentStation();
+      }
+    }
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * NEXT / PREVIOUS
+   * ---------------------------------------------------------
+   */
+
   function nextStation() {
-  if (scanning || stations.length === 0) {
-    return;
+    if (
+      scanning ||
+      stations.length === 0
+    ) {
+      return;
+    }
+
+    const activeStations =
+      getActiveStationList();
+
+    if (
+      activeStations.length === 0
+    ) {
+      return;
+    }
+
+    if (!currentStation) {
+      playStation(
+        activeStations[0]
+      );
+
+      return;
+    }
+
+    const currentIndex =
+      activeStations.findIndex(
+        (station) =>
+          station.id ===
+          currentStation.id
+      );
+
+    if (currentIndex === -1) {
+      playStation(
+        activeStations[0]
+      );
+
+      return;
+    }
+
+    const nextIndex =
+      (currentIndex + 1) %
+      activeStations.length;
+
+    playStation(
+      activeStations[nextIndex]
+    );
   }
-
-  if (!currentStation) {
-    playStation(stations[0]);
-    return;
-  }
-
-  const currentIndex = stations.findIndex(
-    (station) =>
-      station.id === currentStation.id
-  );
-
-  if (currentIndex === -1) {
-    playStation(stations[0]);
-    return;
-  }
-
-  const nextIndex =
-    (currentIndex + 1) % stations.length;
-
-  playStation(stations[nextIndex]);
-}
 
   function previousStation() {
-  if (scanning || stations.length === 0) {
-    return;
+    if (
+      scanning ||
+      stations.length === 0
+    ) {
+      return;
+    }
+
+    const activeStations =
+      getActiveStationList();
+
+    if (
+      activeStations.length === 0
+    ) {
+      return;
+    }
+
+    if (!currentStation) {
+      playStation(
+        activeStations[
+          activeStations.length - 1
+        ]
+      );
+
+      return;
+    }
+
+    const currentIndex =
+      activeStations.findIndex(
+        (station) =>
+          station.id ===
+          currentStation.id
+      );
+
+    if (currentIndex === -1) {
+      playStation(
+        activeStations[
+          activeStations.length - 1
+        ]
+      );
+
+      return;
+    }
+
+    const previousIndex =
+      (currentIndex -
+        1 +
+        activeStations.length) %
+      activeStations.length;
+
+    playStation(
+      activeStations[
+        previousIndex
+      ]
+    );
   }
 
-  if (!currentStation) {
-    playStation(stations[stations.length - 1]);
-    return;
-  }
-
-  const currentIndex = stations.findIndex(
-    (station) =>
-      station.id === currentStation.id
-  );
-
-  if (currentIndex === -1) {
-    playStation(stations[stations.length - 1]);
-    return;
-  }
-
-  const previousIndex =
-    (currentIndex - 1 + stations.length) %
-    stations.length;
-
-  playStation(stations[previousIndex]);
-}
+  /*
+   * ---------------------------------------------------------
+   * RENDER
+   * ---------------------------------------------------------
+   */
 
   return (
-    <div className={`car-stereo theme-${theme}`}>
-
+    <div
+      className={`car-stereo theme-${theme}`}
+    >
       {/* HEADER */}
 
       <header className="stereo-header">
-
         <div className="brand">
           RETRO RADIO
         </div>
@@ -2190,127 +3755,180 @@ async function playStation(station) {
         </div>
 
         <div className="theme-selector">
-        <span>THEME</span>
-        <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-          <option value="classic">📻 Classic FM</option>
-          <option value="retro">🟢 Retro Radio</option>
-          <option value="amber">🟠 Amber Classic</option>
-          <option value="ocean">🔵 Ocean FM</option>
-          <option value="neon">🟣 Neon FM</option>
-          <option value="cyber">💚 Cyber FM</option>
-          <option value="studio">🔷 Studio</option>
-          <option value="minimal">⚪ Minimal</option>
-          <option value="light">☀️ Light</option>
-        </select>
+          <span>THEME</span>
 
+          <select
+            value={theme}
+            onChange={(e) =>
+              setTheme(
+                e.target.value
+              )
+            }
+          >
+            <option value="classic">
+              📻 Classic FM
+            </option>
+
+            <option value="retro">
+              🟢 Retro Radio
+            </option>
+
+            <option value="amber">
+              🟠 Amber Classic
+            </option>
+
+            <option value="ocean">
+              🔵 Ocean FM
+            </option>
+
+            <option value="neon">
+              🟣 Neon FM
+            </option>
+
+            <option value="cyber">
+              💚 Cyber FM
+            </option>
+
+            <option value="studio">
+              🔷 Studio
+            </option>
+
+            <option value="minimal">
+              ⚪ Minimal
+            </option>
+
+            <option value="light">
+              ☀️ Light
+            </option>
+          </select>
         </div>
-
       </header>
-
 
       {/* LCD DISPLAY */}
 
       <section className="lcd">
-
         <div className="lcd-top">
-
           <span>
             {!online
-            ? "OFFLINE"
-            : scanning
-            ? "SCANNING"
-            : recovering
-            ? "RECOVERING"
-            : autoFailover
-            ? "AUTO SEEK"
-            : playing
-            ? "STEREO"
-            : "READY"}
+              ? "OFFLINE"
+              : scanning
+              ? "SCANNING"
+              : recovering
+              ? "RECOVERING"
+              : autoFailover
+              ? "AUTO SEEK"
+              : playing
+              ? "STEREO"
+              : "READY"}
           </span>
 
           <span>
             {!online
-    ? "◉ NO INTERNET"
-    : scanning
-    ? "◉ SEARCHING"
-    : recovering
-    ? "◉ RECONNECTING"
-    : autoFailover
-    ? "◉ FINDING STATION"
-    : playing
-    ? "● ON AIR"
-    : "○ OFF"}
-</span>
-
+              ? "◉ NO INTERNET"
+              : scanning
+              ? "◉ SEARCHING"
+              : recovering
+              ? "◉ RECONNECTING"
+              : autoFailover
+              ? "◉ FINDING STATION"
+              : playing
+              ? "● ON AIR"
+              : "○ OFF"}
+          </span>
         </div>
 
-        <div className={`scan-message ${scanning ? "visible" : ""}`}>
+        <div
+          className={`scan-message ${
+            scanning
+              ? "visible"
+              : ""
+          }`}
+        >
           {scanMessage}
         </div>
 
-
         <div className="frequency">
-          {getFrequencyDisplay(currentStation)}
+          {getFrequencyDisplay(
+            currentStation
+          )}
         </div>
 
-
         <div className="station-title">
-
           {currentStation?.name ||
             "SEARCHING STATION..."}
-
         </div>
 
         <div className="station-meta">
+          {currentStation?.codec ||
+            "STREAM"}
 
-          {currentStation?.codec || "STREAM"}
-          {currentStation?.bitrate > 0 && ` • ${currentStation.bitrate} KBPS `}
+          {currentStation?.bitrate >
+            0 &&
+            ` • ${currentStation.bitrate} KBPS `}
 
-          {/* {currentStation?.language && currentStation.language.toUpperCase()} */}
-          {/* {" • " && currentStation?.language && currentStation?.country && " • "} */}
-          {currentStation?.country && " • " + currentStation.country.toUpperCase()}
-
+          {currentStation?.country &&
+            " • " +
+              currentStation.country.toUpperCase()}
         </div>
 
         <div className="station-type">
-          {getStationType(currentStation)}
+          {getStationType(
+            currentStation
+          )}
         </div>
 
         <div className="station-tags">
-          {getStationTags(currentStation)}
+          {getStationTags(
+            currentStation
+          )}
         </div>
 
         <div className="signal-section">
           <div className="signal-header">
-            <span>STREAM HEALTH</span>
-            <span>{streamHealth}</span>
+            <span>
+              STREAM HEALTH
+            </span>
+
+            <span>
+              {streamHealth}
+            </span>
           </div>
 
           <div className="signal-bars">
-            {[1, 2, 3, 4, 5].map((level) => (
-              <span key={level} 
-              className={ level <= signalLevel ? "active" : "" }
-              style={{height: `${level * 4 + 4}px`,}}/>
-            )
+            {[1, 2, 3, 4, 5].map(
+              (level) => (
+                <span
+                  key={level}
+                  className={
+                    level <=
+                    signalLevel
+                      ? "active"
+                      : ""
+                  }
+                  style={{
+                    height: `${
+                      level * 4 +
+                      4
+                    }px`,
+                  }}
+                />
+              )
             )}
           </div>
         </div>
 
-
         <div className="station-location">
-
           📍 {locationName}
-
         </div>
 
         <div className="station-distance">
-
-          📡 {getStationDistance(currentStation)}
+          📡{" "}
+          {getStationDistance(
+            currentStation
+          )}
         </div>
-
 
         <div className="lcd-bars">
-
           <span />
           <span />
           <span />
@@ -2319,262 +3937,355 @@ async function playStation(station) {
           <span />
           <span />
           <span />
-
         </div>
-
       </section>
-
 
       {/* FREQUENCY SCALE */}
 
       <section className="frequency-scale">
-  <div className="frequency-window">
-
-    <div
-      className="frequency-track"
-      style={{
-        transform:
-          displayFrequency !== null
-            ? `translateX(calc(50% - ${(displayFrequency - 88) * 40}px))`
-            : "translateX(50%)",
-      }}
-    >
-
-      {Array.from(
-        { length: 201 },
-        (_, index) => {
-          const frequency = 88 + index * 0.1;
-
-          const isMajor = index % 10 === 0;
-          const isHalf = index % 5 === 0;
-
-          return (
-            <div
-              key={frequency.toFixed(1)}
-              className={`frequency-mark ${
-                isMajor
-                  ? "major"
-                  : isHalf
-                  ? "half"
-                  : "minor"
-              }`}
-            >
-
-              {isMajor && (
-                <span className="frequency-number">
-                  {frequency.toFixed(0)}
-                </span>
-              )}
-
-              <div className="frequency-tick">
-                <span />
-              </div>
-
-            </div>
-          );
-        }
-      )}
-
-    </div>
-
-    <div className="frequency-pointer" />
-
-  </div>
-</section>
-
-
-
-      {/* Present Panel */}
-      <section className="preset-panel">
-
-  <div
-  className="preset-heading"
-  onClick={() => setShowPresets((previous) => !previous)}
->
-  <span className="preset-title">
-    RADIO PRESETS
-  </span>
-
-  <div className="preset-heading-right">
-    <span className="preset-count">
-      {presets.filter(Boolean).length}/6
-    </span>
-
-    <span className="preset-arrow">
-      {showPresets ? "▲" : "▼"}
-    </span>
-  </div>
-</div>
-
-{showPresets && (
-  <div className="preset-grid">
-
-    {presets.map((station, index) => {
-
-      const isCurrent =
-        station &&
-        currentStation?.id === station.id;
-
-      return (
-        <div
-          key={index}
-          className={`preset-card ${
-            station ? "stored" : "empty"
-          } ${
-            isCurrent ? "active" : ""
-          }`}
-        >
-
-          <button
-            className="preset-tune"
-            onClick={() =>
-              tunePreset(index)
-            }
-            disabled={!station}
+        <div className="frequency-window">
+          <div
+            className="frequency-track"
+            style={{
+              transform:
+                displayFrequency !==
+                null
+                  ? `translateX(calc(50% - ${
+                      (displayFrequency -
+                        88) *
+                      40
+                    }px))`
+                  : "translateX(50%)",
+            }}
           >
+            {Array.from(
+              { length: 201 },
+              (_, index) => {
+                const frequency =
+                  88 +
+                  index * 0.1;
 
-            <span className="preset-number">
-              P{index + 1}
-            </span>
+                const isMajor =
+                  index % 10 ===
+                  0;
 
-            <span className="preset-frequency">
-              {station ? getFrequencyDisplay(station) : "---"}
-            </span>
+                const isHalf =
+                  index % 5 ===
+                  0;
 
-            <span className="preset-name">
-              {station
-                ? station.name
-                : "EMPTY"}
-            </span>
+                return (
+                  <div
+                    key={frequency.toFixed(
+                      1
+                    )}
+                    className={`frequency-mark ${
+                      isMajor
+                        ? "major"
+                        : isHalf
+                        ? "half"
+                        : "minor"
+                    }`}
+                  >
+                    {isMajor && (
+                      <span className="frequency-number">
+                        {frequency.toFixed(
+                          0
+                        )}
+                      </span>
+                    )}
 
-          </button>
+                    <div className="frequency-tick">
+                      <span />
+                    </div>
+                  </div>
+                );
+              }
+            )}
+          </div>
 
-          <div className="preset-actions">
-
-  <button
-    className="preset-save"
-    onClick={() =>
-      savePreset(index)
-    }
-    disabled={!currentStation}
-  >
-    {station ? "SAVE" : "STORE"}
-  </button>
-
-  {station && (
-    <button
-      className="preset-clear"
-      onClick={() => {
-        setPresets((previousPresets) => {
-          const updated = [...previousPresets];
-          updated[index] = null;
-          return updated;
-        });
-      }}
-    >
-      CLEAR
-    </button>
-  )}
-
-</div>
-
+          <div className="frequency-pointer" />
         </div>
-      );
-    })}
+      </section>
 
-  </div>
-)}
+      {/* PRESETS */}
 
-</section>
+      <section className="preset-panel">
+        <div
+          className="preset-heading"
+          onClick={() =>
+            setShowPresets(
+              (previous) =>
+                !previous
+            )
+          }
+        >
+          <span className="preset-title">
+            RADIO PRESETS
+          </span>
 
+          <div className="preset-heading-right">
+            <span className="preset-count">
+              {
+                presets.filter(
+                  Boolean
+                ).length
+              }
+              /6
+            </span>
+
+            <span className="preset-arrow">
+              {showPresets
+                ? "▲"
+                : "▼"}
+            </span>
+          </div>
+        </div>
+
+        {showPresets && (
+          <div className="preset-grid">
+            {presets.map(
+              (
+                station,
+                index
+              ) => {
+                const isCurrent =
+                  station &&
+                  currentStation?.id ===
+                    station.id;
+
+                return (
+                  <div
+                    key={index}
+                    className={`preset-card ${
+                      station
+                        ? "stored"
+                        : "empty"
+                    } ${
+                      isCurrent
+                        ? "active"
+                        : ""
+                    }`}
+                  >
+                    <button
+                      className="preset-tune"
+                      onClick={() =>
+                        tunePreset(
+                          index
+                        )
+                      }
+                      disabled={
+                        !station
+                      }
+                    >
+                      <span className="preset-number">
+                        P
+                        {index + 1}
+                      </span>
+
+                      <span className="preset-frequency">
+                        {station
+                          ? getFrequencyDisplay(
+                              station
+                            )
+                          : "---"}
+                      </span>
+
+                      <span className="preset-name">
+                        {station
+                          ? station.name
+                          : "EMPTY"}
+                      </span>
+                    </button>
+
+                    <div className="preset-actions">
+                      <button
+                        className="preset-save"
+                        onClick={() =>
+                          savePreset(
+                            index
+                          )
+                        }
+                        disabled={
+                          !currentStation
+                        }
+                      >
+                        {station
+                          ? "SAVE"
+                          : "STORE"}
+                      </button>
+
+                      {station && (
+                        <button
+                          className="preset-clear"
+                          onClick={() => {
+                            setPresets(
+                              (
+                                previousPresets
+                              ) => {
+                                const updated =
+                                  [
+                                    ...previousPresets,
+                                  ];
+
+                                updated[
+                                  index
+                                ] =
+                                  null;
+
+                                return updated;
+                              }
+                            );
+                          }}
+                        >
+                          CLEAR
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+            )}
+          </div>
+        )}
+      </section>
 
       {/* CONTROLS */}
 
       <section className="controls">
-
-        <button onClick={() => scanToStation("previous")}
-        disabled={
-          scanning ||
-          stations.length === 0 ||
-          !navigator.onLine
-        }>
+        <button
+          onClick={() =>
+            scanToStation(
+              "previous"
+            )
+          }
+          disabled={
+            scanning ||
+            stations.length ===
+              0 ||
+            !navigator.onLine
+          }
+        >
           SEEK −
         </button>
 
-        <button className="play" onClick={togglePlay}>
-          {scanning ? "■" : playing ? "❚❚" : "▶"}
+        <button
+          className="play"
+          onClick={togglePlay}
+        >
+          {scanning
+            ? "■"
+            : playing
+            ? "❚❚"
+            : "▶"}
         </button>
 
-        <button onClick={() => scanToStation("next")}
-        disabled={
-          scanning ||
-          stations.length === 0 ||
-          !navigator.onLine
-        }>
+        <button
+          onClick={() =>
+            scanToStation(
+              "next"
+            )
+          }
+          disabled={
+            scanning ||
+            stations.length ===
+              0 ||
+            !navigator.onLine
+          }
+        >
           SEEK +
         </button>
-
       </section>
 
-      <section className="volume-panel">
+      {/* VOLUME */}
 
-        <button className="mute-button" onClick={() => setMuted((previous) => !previous)}>
-          {muted || volume === 0
-          ? "🔇"
-          : "🔊"}
+      <section className="volume-panel">
+        <button
+          className="mute-button"
+          onClick={() =>
+            setMuted(
+              (previous) =>
+                !previous
+            )
+          }
+        >
+          {muted ||
+          volume === 0
+            ? "🔇"
+            : "🔊"}
         </button>
 
-        <input 
-        className="volume-slider"
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        value={muted ? 0 : volume} onChange={(event) => {
-          const newVolume = parseFloat(event.target.value);
-          setVolume(newVolume);
-
-          if (newVolume > 0 && muted) {
-            setMuted(false);
+        <input
+          className="volume-slider"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={
+            muted
+              ? 0
+              : volume
           }
-        }}/>
+          onChange={(event) => {
+            const newVolume =
+              parseFloat(
+                event.target.value
+              );
+
+            setVolume(
+              newVolume
+            );
+
+            if (
+              newVolume > 0 &&
+              muted
+            ) {
+              setMuted(false);
+            }
+          }}
+        />
 
         <span className="volume-value">
           {Math.round(
-            (muted ? 0 : volume) * 100)}%
+            (muted
+              ? 0
+              : volume) *
+              100
+          )}
+          %
         </span>
-
       </section>
-
 
       {/* LOCATION */}
 
       <section className="location-panel">
-
-        <button onClick={getMyLocation}>
-
+        <button
+          onClick={
+            getMyLocation
+          }
+        >
           📍
-
           {locationLoading
             ? " FINDING..."
             : " MY LOCATION"}
-
         </button>
 
-
         <div className="custom-search">
-
           <input
             type="text"
             placeholder="SEARCH CITY..."
-            value={searchLocation}
+            value={
+              searchLocation
+            }
             onChange={(e) =>
               setSearchLocation(
                 e.target.value
               )
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (
+                e.key ===
+                "Enter"
+              ) {
                 searchCustomLocation();
               }
             }}
@@ -2584,47 +4295,125 @@ async function playStation(station) {
             onClick={
               searchCustomLocation
             }
-            disabled={searchingLocation}
+            disabled={
+              searchingLocation
+            }
           >
             {searchingLocation
               ? "..."
               : "TUNE"}
           </button>
-
         </div>
-
       </section>
-
-
-
 
       {/* STATIONS */}
 
       <section className="station-list">
-
         <div className="list-header">
-
           <div className="station-filter">
-            
-            <button 
-            className={stationFilter === "all" ? "active" : ""}
-            onClick={() => setStationFilter("all")}>
+            <button
+              className={
+                stationFilter ===
+                "all"
+                  ? "active"
+                  : ""
+              }
+              onClick={() =>
+                setStationFilter(
+                  "all"
+                )
+              }
+            >
               ALL
             </button>
 
             <button
-            className={stationFilter === "favorites" ? "active" : ""}
-            onClick={() => setStationFilter("favorites")}>
-               ♥ FAVORITES
+              className={
+                stationFilter ===
+                "regions"
+                  ? "active"
+                  : ""
+              }
+              onClick={() => {
+                setStationFilter(
+                  "regions"
+                );
+
+                setSelectedRegion(
+                  "ALL"
+                );
+              }}
+            >
+              REGIONS
+            </button>
+
+            <button
+              className={
+                stationFilter ===
+                "favorites"
+                  ? "active"
+                  : ""
+              }
+              onClick={() =>
+                setStationFilter(
+                  "favorites"
+                )
+              }
+            >
+              ♥ FAVORITES
             </button>
           </div>
 
+          {stationFilter ===
+            "regions" && (
+            <div className="region-selector">
+              <span>
+                REGION
+              </span>
+
+              <select
+                value={
+                  selectedRegion
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSelectedRegion(
+                    event.target
+                      .value
+                  )
+                }
+              >
+                <option value="ALL">
+                  ALL REGIONS
+                </option>
+
+                {availableRegions.map(
+                  (region) => (
+                    <option
+                      key={region}
+                      value={
+                        region
+                      }
+                    >
+                      {region}
+                    </option>
+                  )
+                )}
+              </select>
+            </div>
+          )}
+
           <span>
-            {stationFilter === "favorites" ? favorites.length : stations.length}
+            {stationFilter ===
+            "favorites"
+              ? favorites.length
+              : stationFilter ===
+                "regions"
+              ? displayedRegionStations.length
+              : stations.length}
           </span>
-
         </div>
-
 
         {loading && (
           <div className="loading">
@@ -2633,252 +4422,559 @@ async function playStation(station) {
         )}
 
         {!loading &&
-        displayedStations.length === 0 && (
-          <div className="loading">
-            NO FAVORITE STATIONS
-          </div>
-        )}
-
+          displayedStations.length ===
+            0 && (
+            <div className="loading">
+              {stationFilter ===
+              "favorites"
+                ? "NO FAVORITE STATIONS"
+                : stationFilter ===
+                  "regions"
+                ? "NO REGION STATIONS"
+                : "NO STATIONS"}
+            </div>
+          )}
 
         {!loading &&
-          displayedStations.map((station) => (
+          displayedStations.map(
+            (station) => (
+              <div
+                key={station.id}
+                className={`station-row ${
+                  currentStation?.id ===
+                  station.id
+                    ? "selected"
+                    : ""
+                }`}
+                onClick={() =>
+                  playStation(
+                    station
+                  )
+                }
+              >
+                <div className="station-info">
+                  <strong>
+                    <span
+                      className={`station-health ${
+                        stationHealth[
+                          station.id
+                        ] ||
+                        "unknown"
+                      }`}
+                      title={
+                        stationHealth[
+                          station.id
+                        ] ===
+                        "healthy"
+                          ? "Station healthy"
+                          : stationHealth[
+                              station.id
+                            ] ===
+                            "unhealthy"
+                          ? "Station unavailable"
+                          : "Station not tested"
+                      }
+                    >
+                      ●
+                    </span>
 
-            <div
-              key={station.id}
-              className={`station-row ${currentStation?.id === station.id ? "selected" : ""}`}
-              onClick={() => playStation(station)}
-            >
+                    {station.name}
 
-              <div className="station-info">
+                    {currentStation?.id ===
+                      station.id &&
+                      playing && (
+                        <span className="on-air-indicator">
+                          ● ON AIR
+                        </span>
+                      )}
+                  </strong>
 
-  <strong>
-    {station.name}
+                  <small>
+                    {station.state ||
+                      station.country ||
+                      "UNKNOWN"}
 
-    {currentStation?.id === station.id && playing && (
-      <span className="on-air-indicator">
-        ● ON AIR
-      </span>
-    )}
-  </strong>
+                    {station.distance !==
+                      null && (
+                      <>
+                        {" • "}
+                        {station.distance.toFixed(
+                          1
+                        )}{" "}
+                        km
+                      </>
+                    )}
+                  </small>
+                </div>
 
-  <small>
-    {station.state || station.country || "UNKNOWN"}
+                <div className="codec">
+                  {station.distance !==
+                  null
+                    ? `${station.distance.toFixed(
+                        1
+                      )} KM`
+                    : "DIGITAL"}
 
-    {station.distance !== null && (
-      <>
-        {" • "}
-        {station.distance.toFixed(1)} km
-      </>
-    )}
-  </small>
+                  <br />
 
-</div>
+                  {station.codec ||
+                    "STREAM"}
+                </div>
 
+                <button
+                  className={`favorite-button ${
+                    isFavorite(
+                      station
+                    )
+                      ? "favorite"
+                      : ""
+                  }`}
+                  onClick={(event) => {
+                    event.stopPropagation();
 
-              <div className="codec">
-
-                {station.distance !== null? `${station.distance.toFixed(1)} KM` : "DIGITAL"}
-                <br />
-                {station.codec || "STREAM"}
+                    toggleFavorite(
+                      station
+                    );
+                  }}
+                >
+                  {isFavorite(
+                    station
+                  )
+                    ? "♥"
+                    : "♡"}
+                </button>
               </div>
-
-              <button className={`favorite-button ${isFavorite(station) ? "favorite" : "" }`} onClick={(event) => {
-                event.stopPropagation();
-                toggleFavorite(station);
-              }}>
-                {isFavorite(station) ? "♥" : "♡"}
-              </button>
-
-            </div>
-
-          ))}
-
+            )
+          )}
       </section>
 
+      {/* =====================================================
+          AUDIO ENGINE
+          ===================================================== */}
 
       <audio
-         ref={audioRef}
-         volume={volume}
-         muted={muted}
-         controls={false}
-  onLoadStart={() =>
-    console.log("AUDIO: loadstart")
-  }
-  onLoadedMetadata={() =>
-    console.log("AUDIO: metadata loaded")
-  }
-  onCanPlay={() =>
-    console.log("AUDIO: can play")
-  }
-  onPlay={() => {
-  console.log("AUDIO: PLAY");
+        ref={audioRef}
+        volume={volume}
+        muted={muted}
+        controls={false}
 
-  setPlaying(true);
-  setRecovering(false);
+        onLoadStart={() => {
+          console.log(
+            "AUDIO: loadstart"
+          );
 
-  recoveryAttemptRef.current = 0;
+          if (
+            !manuallyPausedRef.current
+          ) {
+            setStreamHealth(
+              "CONNECTING"
+            );
+          }
+        }}
 
-  if (recoveryTimerRef.current) {
-    clearTimeout(
-      recoveryTimerRef.current
-    );
+        onLoadedMetadata={() => {
+          console.log(
+            "AUDIO: metadata loaded"
+          );
+        }}
 
-    recoveryTimerRef.current = null;
-  }
+        onCanPlay={() => {
+          console.log(
+            "AUDIO: can play"
+          );
+        }}
 
-  if ("mediaSession" in navigator) {
-    navigator.mediaSession.playbackState = "playing";
-  }
+        onPlay={() => {
+          console.log(
+            "AUDIO: PLAY"
+          );
 
-  updateSignalLevel();
-}}
+          if (
+            manuallyPausedRef.current
+          ) {
+            console.log(
+              "AUDIO PLAY IGNORED: USER PAUSED"
+            );
 
-  onPlaying={() =>{
-    console.log("AUDIO: PLAYING")
-    updateSignalLevel();
-  }  }
+            return;
+          }
 
-  onPause={() => {
-  console.log("AUDIO: PAUSE");
+          setPlaying(true);
+          setRecovering(false);
 
-  setPlaying(false);
+          recoveryAttemptRef.current =
+            0;
 
-  setSignalLevel(0);
-  setStreamHealth("PAUSED");
+          if (
+            recoveryTimerRef.current
+          ) {
+            clearTimeout(
+              recoveryTimerRef.current
+            );
 
-  if ("mediaSession" in navigator) {
-    navigator.mediaSession.playbackState = "paused";
-  }
-}}
+            recoveryTimerRef.current =
+              null;
+          }
 
-  onWaiting={() => {
-    console.log("AUDIO: WAITING")
-    setSignalLevel(2);
-  setStreamHealth("BUFFERING");
-  }  }
+          errorRecoveryPendingRef.current =
+            false;
 
+          if (
+            "mediaSession" in
+            navigator
+          ) {
+            navigator.mediaSession.playbackState =
+              "playing";
+          }
 
-  onStalled={() => {
-  console.log("AUDIO: STALLED");
+          updateSignalLevel();
+        }}
 
-  // if (!scanning && currentStation) {
-  //   recoverCurrentStation();
-  // }
-  setSignalLevel(1);
-  setStreamHealth("WEAK");
-  }}
-  onError={(event) => {
+        onPlaying={() => {
+          console.log(
+            "AUDIO: PLAYING"
+          );
 
+          if (
+            manuallyPausedRef.current
+          ) {
+            return;
+          }
+
+          setPlaying(true);
+          setRecovering(false);
+          setStreamHealth(
+            "GOOD"
+          );
+
+          updateSignalLevel();
+
+          if (
+            "mediaSession" in
+            navigator
+          ) {
+            navigator.mediaSession.playbackState =
+              "playing";
+          }
+        }}
+
+        onPause={() => {
+          console.log(
+            "AUDIO: PAUSE"
+          );
+
+          /*
+           * This is the important part:
+           *
+           * Internal pause != user pause.
+           */
+          if (
+            internalAudioChangeRef.current
+          ) {
+            console.log(
+              "AUDIO PAUSE: INTERNAL CHANGE"
+            );
+
+            return;
+          }
+
+          if (
+            manuallyPausedRef.current
+          ) {
+            setPlaying(false);
+            setSignalLevel(0);
+            setStreamHealth(
+              "PAUSED"
+            );
+
+            if (
+              "mediaSession" in
+              navigator
+            ) {
+              navigator.mediaSession.playbackState =
+                "paused";
+            }
+
+            return;
+          }
+
+          /*
+           * If browser pauses because of
+           * an external event, don't immediately
+           * assume the station is broken.
+           */
+          setPlaying(false);
+
+          if (
+            navigator.onLine
+          ) {
+            setSignalLevel(0);
+
+            /*
+             * Don't immediately trigger
+             * recovery from pause.
+             */
+            if (
+              !scanning &&
+              currentStation
+            ) {
+              setStreamHealth(
+                "BUFFERING"
+              );
+            }
+          }
+
+          if (
+            "mediaSession" in
+            navigator
+          ) {
+            navigator.mediaSession.playbackState =
+              "paused";
+          }
+        }}
+
+        onWaiting={() => {
+          console.log(
+            "AUDIO: WAITING"
+          );
+
+          setSignalLevel(2);
+          setStreamHealth(
+            "BUFFERING"
+          );
+        }}
+
+        // onStalled={() => {
+        //   console.log(
+        //     "AUDIO: STALLED"
+        //   );
+
+        //   /*
+        //    * IMPORTANT:
+        //    *
+        //    * Do NOT immediately call
+        //    * recoverCurrentStation().
+        //    *
+        //    * Internet radio can stall temporarily.
+        //    *
+        //    * Give the browser time to recover.
+        //    */
+        //   setSignalLevel(1);
+        //   setStreamHealth(
+        //     "WEAK"
+        //   );
+        // }}
+
+        onStalled={() => {
   const audio =
-    event.currentTarget;
+    audioRef.current;
 
-  const mediaError =
-    audio.error;
-
-  console.error(
-    "AUDIO ERROR:",
-    mediaError
+  console.log(
+    "AUDIO: STALLED",
+    {
+      paused: audio?.paused,
+      readyState: audio?.readyState,
+      networkState: audio?.networkState,
+      currentTime: audio?.currentTime,
+      station:
+        currentStation?.name,
+    }
   );
 
-  setSignalLevel(0);
-  setStreamHealth("LOST");
-
-  // --------------------------------
-  // PERMANENT STREAM FAILURE
-  // --------------------------------
-
+  /*
+   * User intentionally paused.
+   */
   if (
-    mediaError?.code === 4
+    manuallyPausedRef.current
   ) {
-
-    console.warn(
-      "FORMAT ERROR — STREAM UNPLAYABLE"
-    );
-
     return;
   }
 
-  // --------------------------------
-  // TEMPORARY STREAM FAILURE
-  // --------------------------------
-
-  if (
-    !scanning &&
-    currentStation
-  ) {
-
-    recoverCurrentStation();
+  /*
+   * Ignore stalls while scanning.
+   */
+  if (scanning) {
+    return;
   }
+
+  /*
+   * Don't immediately declare the
+   * station unhealthy.
+   */
+  setSignalLevel(1);
+  setStreamHealth("WEAK");
 }}
-      />
 
-      {presetToReplace !== null && currentStation && (
-  <div className="preset-confirm-overlay">
+        onError={(event) => {
+          const audio =
+            event.currentTarget;
 
-    <div className="preset-confirm">
+          const mediaError =
+            audio.error;
 
-      <div className="preset-confirm-title">
-        REPLACE PRESET?
-      </div>
+          console.error(
+            "AUDIO ERROR:",
+            mediaError
+          );
 
-      <div className="preset-confirm-text">
-        P{presetToReplace + 1} already contains:
-      </div>
-
-      <div className="preset-confirm-station">
-        {presets[presetToReplace]?.name}
-      </div>
-
-      <div className="preset-confirm-text">
-        Replace it with:
-      </div>
-
-      <div className="preset-confirm-station">
-        {currentStation.name}
-      </div>
-
-      <div className="preset-confirm-actions">
-
-        <button
-          onClick={() => {
-            setPresetToReplace(null);
-          }}
-        >
-          CANCEL
-        </button>
-
-        <button
-          className="confirm-replace"
-          onClick={() => {
-
-            setPresets((previousPresets) => {
-              const updated = [
-                ...previousPresets
-              ];
-
-              updated[presetToReplace] =
-                currentStation;
-
-              return updated;
-            });
-
+          /*
+           * Ignore errors from obsolete
+           * playback requests.
+           */
+          if (
+            audioStationIdRef.current !==
+            currentStation?.id
+          ) {
             console.log(
-              `Replaced P${presetToReplace + 1} with ${currentStation.name}`
+              "AUDIO ERROR IGNORED: OLD STATION"
             );
 
-            setPresetToReplace(null);
-          }}
-        >
-          REPLACE
-        </button>
+            return;
+          }
 
-      </div>
+          if (
+            manuallyPausedRef.current
+          ) {
+            console.log(
+              "AUDIO ERROR IGNORED: USER PAUSED"
+            );
 
-    </div>
+            return;
+          }
 
-  </div>
-)}
+          setSignalLevel(0);
+          setStreamHealth(
+            "LOST"
+          );
 
+          /*
+           * FORMAT / UNSUPPORTED MEDIA.
+           */
+          if (
+            mediaError?.code === 4
+          ) {
+            console.warn(
+              "FORMAT ERROR — STREAM UNPLAYABLE"
+            );
+
+            setStationHealth(
+              (previous) => ({
+                ...previous,
+                [currentStation.id]:
+                  "unhealthy",
+              })
+            );
+
+            return;
+          }
+
+          /*
+           * Prevent duplicate recovery.
+           */
+          if (
+            !scanning &&
+            currentStation &&
+            !errorRecoveryPendingRef.current
+          ) {
+            errorRecoveryPendingRef.current =
+              true;
+
+            recoveryStationIdRef.current =
+              currentStation.id;
+
+            recoverCurrentStation();
+          }
+        }}
+      />
+
+      {/* PRESET REPLACEMENT */}
+
+      {presetToReplace !==
+        null &&
+        currentStation && (
+          <div className="preset-confirm-overlay">
+            <div className="preset-confirm">
+              <div className="preset-confirm-title">
+                REPLACE PRESET?
+              </div>
+
+              <div className="preset-confirm-text">
+                P
+                {presetToReplace +
+                  1}{" "}
+                already contains:
+              </div>
+
+              <div className="preset-confirm-station">
+                {
+                  presets[
+                    presetToReplace
+                  ]?.name
+                }
+              </div>
+
+              <div className="preset-confirm-text">
+                Replace it with:
+              </div>
+
+              <div className="preset-confirm-station">
+                {
+                  currentStation.name
+                }
+              </div>
+
+              <div className="preset-confirm-actions">
+                <button
+                  onClick={() =>
+                    setPresetToReplace(
+                      null
+                    )
+                  }
+                >
+                  CANCEL
+                </button>
+
+                <button
+                  className="confirm-replace"
+                  onClick={() => {
+                    setPresets(
+                      (
+                        previousPresets
+                      ) => {
+                        const updated =
+                          [
+                            ...previousPresets,
+                          ];
+
+                        updated[
+                          presetToReplace
+                        ] =
+                          currentStation;
+
+                        return updated;
+                      }
+                    );
+
+                    console.log(
+                      `Replaced P${
+                        presetToReplace +
+                        1
+                      } with ${
+                        currentStation.name
+                      }`
+                    );
+
+                    setPresetToReplace(
+                      null
+                    );
+                  }}
+                >
+                  REPLACE
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 }
