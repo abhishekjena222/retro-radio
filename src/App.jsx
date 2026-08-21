@@ -33,6 +33,8 @@ function App() {
 
   const activeStationListRef = useRef([]);
 
+  const lcdRef = useRef(null);
+
   /*
    * ---------------------------------------------------------
    * PLAYBACK RACE PROTECTION
@@ -103,6 +105,15 @@ function App() {
 
   const [searchLocation, setSearchLocation] =
     useState("");
+
+  const [stationSearch, setStationSearch] =
+    useState("");
+
+  const [searchingStations, setSearchingStations] =
+    useState(false);
+
+  const [searchResults, setSearchResults] =
+    useState([]);
 
   const [searchingLocation, setSearchingLocation] =
     useState(false);
@@ -219,6 +230,9 @@ function App() {
   const [isTuning, setIsTuning] =
     useState(false);
 
+  const [showMiniPlayer, setShowMiniPlayer] =
+    useState(false);
+
   /*
    * ---------------------------------------------------------
    * DERIVED LISTS
@@ -257,8 +271,30 @@ function App() {
   //     ? displayedRegionStations
   //     : stations;
 
+  // const displayedStations =
+  // useMemo(() => {
+  //   if (stationFilter === "favorites") {
+  //     return favorites;
+  //   }
+
+  //   if (stationFilter === "regions") {
+  //     return displayedRegionStations;
+  //   }
+
+  //   return stations;
+  // }, [
+  //   stationFilter,
+  //   favorites,
+  //   displayedRegionStations,
+  //   stations,
+  // ]);
+
   const displayedStations =
   useMemo(() => {
+    if (stationSearch.trim()) {
+      return searchResults;
+    }
+
     if (stationFilter === "favorites") {
       return favorites;
     }
@@ -269,11 +305,14 @@ function App() {
 
     return stations;
   }, [
+    stationSearch,
+    searchResults,
     stationFilter,
     favorites,
     displayedRegionStations,
     stations,
   ]);
+
 
   // const activeStationList =
   //   stationFilter === "regions"
@@ -282,8 +321,30 @@ function App() {
   //     ? favorites
   //     : stations;
 
+  // const activeStationList =
+  // useMemo(() => {
+  //   if (stationFilter === "regions") {
+  //     return displayedRegionStations;
+  //   }
+
+  //   if (stationFilter === "favorites") {
+  //     return favorites;
+  //   }
+
+  //   return stations;
+  // }, [
+  //   stationFilter,
+  //   favorites,
+  //   displayedRegionStations,
+  //   stations,
+  // ]);
+
   const activeStationList =
   useMemo(() => {
+    if (stationSearch.trim()) {
+      return searchResults;
+    }
+
     if (stationFilter === "regions") {
       return displayedRegionStations;
     }
@@ -294,6 +355,8 @@ function App() {
 
     return stations;
   }, [
+    stationSearch,
+    searchResults,
     stationFilter,
     favorites,
     displayedRegionStations,
@@ -599,6 +662,39 @@ function App() {
 
   return () => {
     clearInterval(interval);
+  };
+}, []);
+
+useEffect(() => {
+  const lcdElement = lcdRef.current;
+
+  if (!lcdElement) {
+    return;
+  }
+
+  const observer =
+    new IntersectionObserver(
+      ([entry]) => {
+        /*
+         * Main LCD visible:
+         * hide mini-player.
+         *
+         * Main LCD out of view:
+         * show mini-player.
+         */
+        setShowMiniPlayer(
+          !entry.isIntersecting
+        );
+      },
+      {
+        threshold: 0.1,
+      }
+    );
+
+  observer.observe(lcdElement);
+
+  return () => {
+    observer.disconnect();
   };
 }, []);
 
@@ -1595,6 +1691,208 @@ function App() {
         favorite.id === station.id
     );
   }
+
+
+  function handleStationSearchKeyDown(
+  event
+) {
+  if (event.key === "Enter") {
+    searchStations();
+  }
+
+  if (
+    event.key === "Escape"
+  ) {
+    setStationSearch("");
+    setSearchResults([]);
+  }
+}
+
+
+  /*
+ * ---------------------------------------------------------
+ * SEARCH FM STATIONS
+ * ---------------------------------------------------------
+ */
+
+async function searchStations() {
+  const query =
+    stationSearch.trim();
+
+  if (!query) {
+    setSearchResults([]);
+    return;
+  }
+
+  if (!navigator.onLine) {
+    console.log(
+      "STATION SEARCH BLOCKED: INTERNET OFFLINE"
+    );
+
+    setSearchResults([]);
+    return;
+  }
+
+  try {
+    setSearchingStations(true);
+
+    console.log(
+      "================================================="
+    );
+
+    console.log(
+      "WORLDWIDE FM STATION SEARCH:",
+      query
+    );
+
+    const params =
+      new URLSearchParams({
+        name: query,
+        hidebroken: "true",
+        // has_geo_info: "true",
+        order: "votes",
+        reverse: "true",
+        limit: "100",
+      });
+
+    /*
+     * Keep normal station search focused on India.
+     *
+     * We can remove this later if you want worldwide
+     * station search.
+     */
+    // params.set(
+    //   "country",
+    //   "India"
+    // );
+
+    const requestUrl =
+      `${API}?${params}`;
+
+    console.log(
+      "SEARCH REQUEST:",
+      requestUrl
+    );
+
+    const response =
+      await fetch(requestUrl);
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}`
+      );
+    }
+
+    const data =
+      await response.json();
+
+    console.log(
+      "RAW SEARCH RESULTS:",
+      data.length
+    );
+
+    const normalizedResults =
+      data
+        .map((station) =>
+          normalizeStation(
+            station,
+            // location?.latitude ??
+              null,
+            // location?.longitude ??
+              null
+          )
+        )
+        .filter(
+          (station) =>
+            station.id &&
+            station.streamUrl
+        );
+
+    /*
+     * Remove duplicate UUIDs.
+     */
+    const uniqueResults =
+      Array.from(
+        new Map(
+          normalizedResults.map(
+            (station) => [
+              station.id,
+              station,
+            ]
+          )
+        ).values()
+      );
+
+      console.log(
+      "FINAL SEARCH RESULTS:",
+      uniqueResults.length
+    );
+
+    console.table(
+      uniqueResults.map(
+        (station) => ({
+          name: station.name,
+          country:
+            station.country ||
+            "UNKNOWN",
+          region:
+            station.state ||
+            "UNKNOWN",
+          geo:
+            station.latitude !== null &&
+            station.longitude !== null
+              ? "YES"
+              : "NO",
+        })
+      )
+    );
+
+    setSearchResults(
+      uniqueResults
+    );
+
+    /*
+     * If the user currently selected a region,
+     * keep only results belonging to that region.
+     *
+     * This does NOT modify regionStations.
+     */
+    // const filteredResults =
+    //   selectedRegion &&
+    //   selectedRegion !== "ALL"
+    //     ? uniqueResults.filter(
+    //         (station) =>
+    //           getStationRegion(
+    //             station
+    //           ) === selectedRegion
+    //       )
+    //     : uniqueResults;
+
+    // setSearchResults(
+    //   filteredResults
+    // );
+
+    // console.log(
+    //   "FINAL SEARCH RESULTS:",
+    //   filteredResults.length
+    // );
+
+    console.log(
+      "================================================="
+    );
+  } catch (error) {
+    console.error(
+      "FM STATION SEARCH FAILED:",
+      error
+    );
+
+    setSearchResults([]);
+  } finally {
+    setSearchingStations(false);
+  }
+}
+
+
 
   /*
    * ---------------------------------------------------------
@@ -3806,7 +4104,7 @@ function App() {
 
       {/* LCD DISPLAY */}
 
-      <section className="lcd">
+      <section ref={lcdRef} className="lcd">
         <div className="lcd-top">
           <span>
             {!online
@@ -4404,7 +4702,7 @@ function App() {
             </div>
           )}
 
-          <span>
+          {/* <span>
             {stationFilter ===
             "favorites"
               ? favorites.length
@@ -4412,8 +4710,61 @@ function App() {
                 "regions"
               ? displayedRegionStations.length
               : stations.length}
-          </span>
+          </span> */}
+          <span>
+  {stationSearch.trim()
+    ? searchResults.length
+    : stationFilter ===
+      "favorites"
+    ? favorites.length
+    : stationFilter ===
+      "regions"
+    ? displayedRegionStations.length
+    : stations.length}
+</span>
         </div>
+        <div className="station-search">
+          <input type="text" placeholder="SEARCH FM STATIONS..." value={stationSearch} onChange={(event) => {
+            const value = event.target.value;
+            setStationSearch(value);
+
+      /*
+       * Clearing search restores
+       * the normal station list.
+       */
+      if (!value.trim()) {
+        setSearchResults([]);
+      }
+    }}
+    onKeyDown={
+      handleStationSearchKeyDown
+    }
+  />
+
+  <button
+    onClick={searchStations}
+    disabled={
+      searchingStations ||
+      !stationSearch.trim()
+    }
+  >
+    {searchingStations
+      ? "..."
+      : "SEARCH"}
+  </button>
+
+  {stationSearch && (
+    <button
+      className="station-search-clear"
+      onClick={() => {
+        setStationSearch("");
+        setSearchResults([]);
+      }}
+    >
+      ✕
+    </button>
+  )}
+</div>
 
         {loading && (
           <div className="loading">
@@ -4421,7 +4772,7 @@ function App() {
           </div>
         )}
 
-        {!loading &&
+        {/* {!loading &&
           displayedStations.length ===
             0 && (
             <div className="loading">
@@ -4433,7 +4784,22 @@ function App() {
                 ? "NO REGION STATIONS"
                 : "NO STATIONS"}
             </div>
-          )}
+          )} */}
+
+          {!loading &&
+  displayedStations.length === 0 && (
+    <div className="loading">
+      {stationSearch.trim()
+        ? searchingStations
+          ? "SEARCHING FM STATIONS..."
+          : "NO FM STATIONS FOUND"
+        : stationFilter === "favorites"
+        ? "NO FAVORITE STATIONS"
+        : stationFilter === "regions"
+        ? "NO REGION STATIONS"
+        : "NO STATIONS"}
+    </div>
+  )}
 
         {!loading &&
           displayedStations.map(
@@ -4551,6 +4917,106 @@ function App() {
       {/* =====================================================
           AUDIO ENGINE
           ===================================================== */}
+
+      {showMiniPlayer &&
+  currentStation && (
+    <div className={`mini-player ${showMiniPlayer ? "visible" : ""}`}>
+      <div className="mini-player-art">
+  {currentStation.favicon ? (
+    <img
+      src={currentStation.favicon}
+      alt=""
+      onError={(event) => {
+        event.currentTarget.style.display =
+          "none";
+      }}
+    />
+  ) : (
+    <img
+  className="mini-player-fallback-image"
+  src="https://cdn3.iconfinder.com/data/icons/journalism-18/492/12255_-_Radio-512.png"
+  alt="Radio"
+/>
+  )}
+</div>
+      <div className="mini-player-info">
+        <div className="mini-player-status">
+          {playing
+            ? "● ON AIR"
+            : recovering
+            ? "◉ RECOVERING"
+            : "○ PAUSED"}
+        </div>
+
+        <div className="mini-player-name">
+          {currentStation.name}
+        </div>
+
+        <div className="mini-player-meta">
+          {getFrequencyDisplay(
+            currentStation
+          )}
+
+          {currentStation.codec &&
+            ` • ${currentStation.codec}`}
+
+          {currentStation.country &&
+            ` • ${currentStation.country}`}
+        </div>
+      </div>
+
+      <div className="mini-player-controls">
+        <button
+          type="button"
+          onClick={() =>
+            scanToStation("previous")
+          }
+          disabled={
+            scanning ||
+            !navigator.onLine
+          }
+          title="Previous station"
+        >
+          ◀
+        </button>
+
+        <button
+          type="button"
+          className="mini-player-play"
+          onClick={togglePlay}
+          disabled={
+            !navigator.onLine
+          }
+          title={
+            playing
+              ? "Pause"
+              : "Play"
+          }
+        >
+          {scanning
+            ? "■"
+            : playing
+            ? "❚❚"
+            : "▶"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            scanToStation("next")
+          }
+          disabled={
+            scanning ||
+            !navigator.onLine
+          }
+          title="Next station"
+        >
+          ▶
+        </button>
+      </div>
+    </div>
+  )}
+
 
       <audio
         ref={audioRef}
