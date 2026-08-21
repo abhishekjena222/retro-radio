@@ -138,15 +138,16 @@ select {
    LCD DISPLAY
    ========================================================= */
 
-.lcd {
-  margin-top: 25px;
 
+.lcd {
+  position: relative;
+
+  margin-top: 25px;
   padding: 25px;
 
-  background: var(--lcd-bg);
+  background: transparent;
 
   border: 4px solid var(--lcd-border);
-
   border-radius: 6px;
 
   box-shadow:
@@ -156,6 +157,9 @@ select {
 
   text-shadow:
     0 0 8px var(--accent-glow);
+
+  overflow: hidden;
+  isolation: isolate;
 
   transition:
     background 0.25s ease,
@@ -2694,20 +2698,33 @@ select {
 
   background:
     linear-gradient(
-      180deg,
-      rgb(from var(--radio-bg) r g b / 0.88),
-      rgb(from var(--app-bg) r g b / 0.88)
+      135deg,
+      /* rgb(from var(--radio-bg) r g b / 0.58),
+      rgb(from var(--app-bg) r g b / 0.42) */
+
+      135deg,
+    rgb(from var(--radio-bg) r g b / 0.55),
+    rgb(from var(--app-bg) r g b / 0.38)
     );
 
   border: 1px solid var(--radio-border);
+  /* border: 1px solid rgb(255 255 255 / 0.16); */
+  
   border-radius: 8px;
 
   box-shadow:
-    0 10px 35px rgba(0, 0, 0, 0.45),
-    0 2px 8px rgba(0, 0, 0, 0.35);
+  0 10px 35px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    /* 0 10px 35px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.35); */
 
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* backdrop-filter: blur(1px); */
+  backdrop-filter: blur(18px) saturate(140%);
+
+/* backdrop-filter: blur(18px) saturate(140%); */
+  /* -webkit-backdrop-filter: blur(20px); */
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
 
   z-index: 9999;
 
@@ -3150,7 +3167,7 @@ select {
    LCD STATION IMAGE BACKGROUND
    ========================================================= */
 
-.lcd {
+/* .lcd {
   position: relative;
   overflow: hidden;
   isolation: isolate;
@@ -3201,4 +3218,91 @@ select {
 .lcd-content {
   position: relative;
   z-index: 1;
+} */
+
+
+
+
+
+/* =========================================================
+   LCD STATION IMAGE BACKGROUND
+   ========================================================= */
+
+.lcd::after {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  /*
+   * Base LCD color, but transparent enough
+   * for the station image to show through.
+   */
+  background: var(--lcd-bg);
+
+  opacity: 0.58;
+
+  z-index: 0;
+
+  pointer-events: none;
+}
+
+
+/* =========================================================
+   STATION IMAGE
+   ========================================================= */
+
+.lcd-station-background {
+  position: absolute;
+  inset: -35px;
+
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+
+  opacity: 0.32;
+
+  filter:
+    blur(22px)
+    saturate(0.9);
+
+  transform: scale(1.12);
+
+  z-index: 1;
+
+  pointer-events: none;
+}
+
+
+/* =========================================================
+   DARK OVERLAY
+   ========================================================= */
+
+.lcd::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.18),
+      rgba(0, 0, 0, 0.48)
+    );
+
+  z-index: 2;
+
+  pointer-events: none;
+}
+
+
+/* =========================================================
+   LCD CONTENT
+   ========================================================= */
+
+.lcd-content {
+  position: relative;
+
+  z-index: 3;
 }
