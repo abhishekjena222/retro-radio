@@ -2692,19 +2692,12 @@ select {
   gap: 16px;
   padding: 10px 14px;
 
-  /* background:
+  background:
     linear-gradient(
       180deg,
-      var(--radio-bg),
-      var(--app-bg)
-    ); */
-
-  background:
-  linear-gradient(
-    180deg,
-    rgb(from var(--radio-bg) r g b / 0.88),
-    rgb(from var(--app-bg) r g b / 0.88)
-  );
+      rgb(from var(--radio-bg) r g b / 0.88),
+      rgb(from var(--app-bg) r g b / 0.88)
+    );
 
   border: 1px solid var(--radio-border);
   border-radius: 8px;
@@ -2719,7 +2712,7 @@ select {
   z-index: 9999;
 
   /*
-   * Hidden state
+   * Hidden
    */
   opacity: 0;
   visibility: hidden;
@@ -2731,15 +2724,17 @@ select {
     scale(0.98);
 
   transition:
-    opacity 0.28s ease,
-    transform 0.32s cubic-bezier(
+    opacity 0.25s ease,
+    transform 0.30s cubic-bezier(
       0.22,
       1,
       0.36,
       1
     ),
-    visibility 0.32s ease;
+    visibility 0s linear 0.30s;
 }
+
+
 
 .mini-player.visible {
   opacity: 1;
@@ -2750,6 +2745,16 @@ select {
     translateX(-50%)
     translateY(0)
     scale(1);
+
+  transition:
+    opacity 0.25s ease,
+    transform 0.30s cubic-bezier(
+      0.22,
+      1,
+      0.36,
+      1
+    ),
+    visibility 0s;
 }
 
 
@@ -2802,6 +2807,8 @@ select {
   gap: 6px;
 
   flex-shrink: 0;
+
+  -webkit-tap-highlight-color: transparent;
 }
 
 .mini-player-controls button {
@@ -2812,9 +2819,7 @@ select {
   align-items: center;
   justify-content: center;
 
-  border: 1px solid
-    var(--radio-border);
-
+  border: 1px solid var(--radio-border);
   border-radius: 4px;
 
   background: var(--radio-bg);
@@ -2825,6 +2830,8 @@ select {
   font-weight: 800;
 
   cursor: pointer;
+
+  -webkit-tap-highlight-color: transparent;
 
   transition:
     transform 0.12s ease,
@@ -2888,8 +2895,37 @@ select {
 .mini-player-fallback-image {
   width: 70%;
   height: 70%;
+
   object-fit: contain;
+
   opacity: 0.8;
+}
+
+.mini-player-main {
+  display: flex;
+  align-items: center;
+
+  gap: 10px;
+
+  flex: 1;
+  min-width: 0;
+
+  cursor: pointer;
+
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mini-player-main:active {
+  opacity: 0.9;
+}
+
+.mini-player-controls {
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mini-player-controls button {
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* =========================================================
@@ -2918,24 +2954,6 @@ select {
 
 @media (max-width: 600px) {
   .mini-player {
-    /* left: 8px;
-    bottom: 8px; */
-
-    transform: none;
-
-    /* width: calc(100% - 16px); */
-
-    min-height: 58px;
-
-    padding: 8px 10px;
-
-    gap: 8px;
-
-    border-radius: 7px;
-  }
-
-  @media (max-width: 600px) {
-  .mini-player {
     left: 8px;
     right: 8px;
 
@@ -2944,13 +2962,32 @@ select {
 
     bottom: 8px;
 
-    transform: translateY(18px) scale(0.98);
+    min-height: 58px;
+
+    padding: 8px 10px;
+
+    gap: 8px;
+
+    border-radius: 7px;
+
+    /*
+     * Hidden
+     */
+    transform:
+      translateY(18px)
+      scale(0.97);
   }
 
   .mini-player.visible {
-    transform: translateY(0) scale(1);
+    transform:
+      translateY(0)
+      scale(1);
   }
-}
+
+  .mini-player-art {
+    width: 42px;
+    height: 42px;
+  }
 
   .mini-player-status {
     font-size: 8px;
@@ -2969,15 +3006,15 @@ select {
   }
 
   .mini-player-controls button {
-    width: 31px;
-    height: 31px;
+    width: 30px;
+    height: 30px;
 
     font-size: 10px;
   }
 
   .mini-player-play {
-    width: 38px !important;
-    height: 38px !important;
+    width: 37px !important;
+    height: 37px !important;
 
     font-size: 13px !important;
   }
@@ -3107,4 +3144,61 @@ select {
   .volume-value {
     font-size: 10px;
   }
+}
+
+/* =========================================================
+   LCD STATION IMAGE BACKGROUND
+   ========================================================= */
+
+.lcd {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.lcd-station-background {
+  position: absolute;
+  inset: -35px;
+
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+
+  opacity: 0.28;
+
+  filter:
+    blur(22px)
+    saturate(0.85);
+
+  transform: scale(1.12);
+
+  z-index: -2;
+
+  pointer-events: none;
+
+  transition:
+    opacity 0.35s ease;
+}
+
+.lcd::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.28),
+      rgba(0, 0, 0, 0.52)
+    );
+
+  z-index: -1;
+
+  pointer-events: none;
+}
+
+.lcd-content {
+  position: relative;
+  z-index: 1;
 }

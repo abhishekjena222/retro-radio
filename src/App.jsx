@@ -687,7 +687,7 @@ useEffect(() => {
         );
       },
       {
-        threshold: 0.1,
+        threshold: 0,
       }
     );
 
@@ -703,6 +703,13 @@ useEffect(() => {
    * HELPERS
    * ---------------------------------------------------------
    */
+
+  function scrollToMainPlayer() {
+  lcdRef.current?.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
+}
 
   function getActiveStationList() {
     if (stationFilter === "favorites") {
@@ -4105,6 +4112,15 @@ async function searchStations() {
       {/* LCD DISPLAY */}
 
       <section ref={lcdRef} className="lcd">
+        {currentStation?.favicon && (
+    <div
+      className="lcd-station-background"
+      style={{
+        backgroundImage: `url("${currentStation.favicon}")`,
+      }}
+    />
+  )}
+  <div className="lcd-content">
         <div className="lcd-top">
           <span>
             {!online
@@ -4235,6 +4251,7 @@ async function searchStations() {
           <span />
           <span />
           <span />
+        </div>
         </div>
       </section>
 
@@ -4921,6 +4938,7 @@ async function searchStations() {
       {showMiniPlayer &&
   currentStation && (
     <div className={`mini-player ${showMiniPlayer ? "visible" : ""}`}>
+      <div className="mini-player-main" onClick={scrollToMainPlayer}>
       <div className="mini-player-art">
   {currentStation.favicon ? (
     <img
@@ -4964,9 +4982,57 @@ async function searchStations() {
             ` • ${currentStation.country}`}
         </div>
       </div>
+      </div>
 
       <div className="mini-player-controls">
         <button
+  type="button"
+  onClick={(event) => {
+    event.stopPropagation();
+    scanToStation("previous");
+  }}
+  disabled={
+    scanning ||
+    !navigator.onLine
+  }
+>
+  ◀
+</button>
+
+<button
+  type="button"
+  className="mini-player-play"
+  onClick={(event) => {
+    event.stopPropagation();
+    togglePlay();
+  }}
+  disabled={!navigator.onLine}
+>
+  {scanning
+    ? "■"
+    : playing
+    ? "❚❚"
+    : "▶"}
+</button>
+
+<button
+  type="button"
+  onClick={(event) => {
+    event.stopPropagation();
+    scanToStation("next");
+  }}
+  disabled={
+    scanning ||
+    !navigator.onLine
+  }
+>
+  ▶
+</button>
+
+
+
+
+        {/* <button
           type="button"
           onClick={() =>
             scanToStation("previous")
@@ -5012,7 +5078,7 @@ async function searchStations() {
           title="Next station"
         >
           ▶
-        </button>
+        </button> */}
       </div>
     </div>
   )}
