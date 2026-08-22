@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import { supabase } from "./supabase";
+
+// export const supabase = createClient(
+//   "https://cixlwibjirnrkfeigdpi.supabase.co",
+//   "sb_publishable_Zyx4kIZ-b0LYRBw1h_lslA_IIJECs7g"
+// );
 
 const API =
   "https://de1.api.radio-browser.info/json/stations/search";
@@ -86,6 +92,7 @@ function App() {
   };
 
   const [stationHealth, setStationHealth] = useState({});
+  const [listeners, setListeners] = useState(null);
 
   const [displayFrequency, setDisplayFrequency] = useState(98.0);
   const [stations, setStations] = useState([]);
@@ -695,6 +702,62 @@ useEffect(() => {
 
   return () => {
     observer.disconnect();
+  };
+}, []);
+
+
+useEffect(() => {
+  let channel;
+
+  const startListenerCounter = async () => {
+    try {
+      // throw new Error(
+      //     "testing live count"
+      //   );
+      channel = supabase.channel("radio-live");
+
+      channel.on(
+        "presence",
+        { event: "sync" },
+        () => {
+          const presence = channel.presenceState();
+
+          const count = Object.keys(presence).length;
+
+          setListeners(count + 2);
+
+          console.log("🎧 LIVE LISTENERS:", count);
+        }
+      );
+
+      const status = await new Promise((resolve) => {
+        channel.subscribe(resolve);
+      });
+
+      if (status === "SUBSCRIBED") {
+        await channel.track({
+          online: true,
+          joinedAt: Date.now(),
+        });
+
+        console.log("🟢 Connected to listener counter");
+      }
+    } catch (error) {
+      console.warn(
+        "⚠️ Listener counter unavailable:",
+        error
+      );
+
+      setListeners(2);
+    }
+  };
+
+  startListenerCounter();
+
+  return () => {
+    if (channel) {
+      supabase.removeChannel(channel);
+    }
   };
 }, []);
 
@@ -4054,6 +4117,7 @@ async function searchStations() {
         <div className="brand">
           RETRO RADIO
         </div>
+        
 
         <div className="mode">
           FM
@@ -4110,6 +4174,12 @@ async function searchStations() {
       </header>
 
       {/* LCD DISPLAY */}
+      <div className="lcd-container">
+
+      <div className="lcd-live">
+    <span className="live-dot" />
+    {listeners} online
+  </div>
 
       <section ref={lcdRef} className="lcd">
         {currentStation?.favicon && (
@@ -4254,6 +4324,7 @@ async function searchStations() {
         </div>
         </div>
       </section>
+    </div>
 
       {/* FREQUENCY SCALE */}
 

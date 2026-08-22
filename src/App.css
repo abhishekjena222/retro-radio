@@ -168,6 +168,65 @@ select {
 }
 
 
+/* .lcd-live {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+
+  color: var(--accent);
+
+  z-index: 10;
+} */
+
+/* .live-dot {
+  width: 6px;
+  height: 6px;
+
+  border-radius: 50%;
+
+  background: #4caf50;
+
+  box-shadow: 0 0 6px #4caf50;
+} */
+
+.lcd-container {
+  position: relative;
+}
+
+.lcd-live {
+  position: absolute;
+  top: -25px;
+  right: 14px;
+
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+
+  color: var(--accent);
+
+  z-index: 10;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4caf50;
+  box-shadow: 0 0 6px #4caf50;
+}
+
 /* =========================================================
    LCD TOP
    ========================================================= */
@@ -3306,3 +3365,29 @@ select {
 
   z-index: 3;
 }
+
+/*DB pass Abhi-retro1234 */
+
+
+/* .live-listeners {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.live-listeners::first-letter {
+  font-size: 10px;
+} */
+
+
+.live-listeners {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+
+
