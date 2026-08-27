@@ -41,6 +41,10 @@ function App() {
 
   const lcdRef = useRef(null);
 
+  const appBackgroundedRef = useRef(false);
+  const backgroundedAtRef = useRef(null);
+  const wasPlayingBeforeBackgroundRef = useRef(false);
+
   /*
    * ---------------------------------------------------------
    * PLAYBACK RACE PROTECTION
@@ -760,6 +764,152 @@ useEffect(() => {
     }
   };
 }, []);
+
+useEffect(() => {
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      console.log("APP BACKGROUNDED");
+
+      appBackgroundedRef.current = true;
+      backgroundedAtRef.current = Date.now();
+
+      return;
+    }
+
+    console.log("APP FOREGROUNDED");
+  };
+
+  document.addEventListener(
+    "visibilitychange",
+    handleVisibilityChange
+  );
+
+  return () => {
+    document.removeEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+  };
+}, []);
+
+useEffect(() => {
+  const handleVisibilityChange = async () => {
+    const audio = audioRef.current;
+
+    if (document.hidden) {
+      console.log("APP BACKGROUNDED");
+
+      appBackgroundedRef.current = true;
+      backgroundedAtRef.current = Date.now();
+
+      /*
+       * Remember whether radio was actively playing
+       * before the interruption/call.
+       */
+      wasPlayingBeforeBackgroundRef.current =
+        !!audio &&
+        !audio.paused &&
+        !manuallyPausedRef.current;
+
+      return;
+    }
+
+    console.log("APP FOREGROUNDED");
+
+    /*
+     * User had manually paused before leaving:
+     * DO NOT auto resume.
+     */
+    if (
+      manuallyPausedRef.current ||
+      !wasPlayingBeforeBackgroundRef.current
+    ) {
+      return;
+    }
+
+    if (
+      !audio ||
+      !currentStation ||
+      !navigator.onLine
+    ) {
+      return;
+    }
+
+    console.log(
+      "RESUMING AFTER INTERRUPTION:",
+      currentStation.name
+    );
+
+    /*
+     * Force a fresh live-stream connection.
+     */
+    try {
+      internalAudioChangeRef.current = true;
+
+      audio.pause();
+
+      audio.src =
+        currentStation.streamUrl;
+
+      audioStationIdRef.current =
+        currentStation.id;
+
+      audio.load();
+
+      internalAudioChangeRef.current = false;
+
+      await audio.play();
+
+      wasPlayingBeforeBackgroundRef.current =
+        false;
+
+      appBackgroundedRef.current = false;
+      backgroundedAtRef.current = null;
+
+      setPlaying(true);
+      setRecovering(false);
+      setStreamHealth("GOOD");
+
+      console.log(
+        "RESUME AFTER INTERRUPTION SUCCESS"
+      );
+
+    } catch (error) {
+      internalAudioChangeRef.current = false;
+
+      console.error(
+        "RESUME AFTER INTERRUPTION FAILED:",
+        error
+      );
+
+      setPlaying(false);
+
+      /*
+       * Let your existing recovery system handle it.
+       */
+      if (
+        !manuallyPausedRef.current
+      ) {
+        recoveryStationIdRef.current =
+          currentStation.id;
+
+        recoverCurrentStation();
+      }
+    }
+  };
+
+  document.addEventListener(
+    "visibilitychange",
+    handleVisibilityChange
+  );
+
+  return () => {
+    document.removeEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+  };
+}, [currentStation]);
 
   /*
    * ---------------------------------------------------------
@@ -3912,81 +4062,151 @@ async function searchStations() {
     }
 
     const requestId =
-      ++playbackRequestRef.current;
+  ++playbackRequestRef.current;
 
-    setStreamHealth(
-      "CONNECTING"
+setStreamHealth(
+  "CONNECTING"
+);
+
+setPlaying(false);
+
+try {
+
+  /*
+   * -------------------------------------------------------
+   * REFRESH STREAM AFTER DEVICE / TAB SLEEP
+   * -------------------------------------------------------
+   */
+  if (appBackgroundedRef.current) {
+
+    const backgroundDuration =
+      backgroundedAtRef.current
+        ? Date.now() -
+          backgroundedAtRef.current
+        : 0;
+
+    console.log(
+      "PLAY AFTER BACKGROUND:",
+      Math.round(
+        backgroundDuration / 1000
+      ),
+      "seconds"
     );
 
-    try {
-      await audio.play();
+    /*
+     * Browser may still think the old
+     * stream is valid even though the
+     * live connection has died.
+     *
+     * Force a fresh connection.
+     */
+    internalAudioChangeRef.current =
+      true;
 
-      if (
-        requestId !==
-        playbackRequestRef.current
-      ) {
-        console.log(
-          "PLAY BUTTON RESULT IGNORED: OLD REQUEST"
-        );
+    audio.pause();
 
-        return;
-      }
+    audio.src =
+      currentStation.streamUrl;
 
-      if (
-        manuallyPausedRef.current
-      ) {
-        return;
-      }
+    audioStationIdRef.current =
+      currentStation.id;
 
-      setPlaying(true);
+    audio.load();
 
-      setRecovering(false);
+    internalAudioChangeRef.current =
+      false;
 
-      console.log(
-        "PLAYING:",
-        currentStation.name
-      );
-    } catch (error) {
-      if (
-        error?.name ===
-        "AbortError"
-      ) {
-        console.log(
-          "PLAY BUTTON ABORTED: REQUEST SUPERSEDED"
-        );
+    appBackgroundedRef.current =
+      false;
 
-        return;
-      }
+    backgroundedAtRef.current =
+      null;
+  }
 
-      console.error(
-        "PLAY BUTTON FAILED:",
-        error
-      );
+  /*
+   * Start / resume playback.
+   */
+  await audio.play();
 
-      setPlaying(false);
+  /*
+   * Ignore an obsolete request.
+   */
+  if (
+    requestId !==
+    playbackRequestRef.current
+  ) {
+    console.log(
+      "PLAY BUTTON RESULT IGNORED: OLD REQUEST"
+    );
 
-      if (
-        isUnplayableStream(
-          audio,
-          error
-        )
-      ) {
-        await skipFailedStation(
-          currentStation
-        );
+    return;
+  }
 
-        return;
-      }
+  /*
+   * User may have pressed pause while
+   * audio.play() was still resolving.
+   */
+  if (
+    manuallyPausedRef.current
+  ) {
+    return;
+  }
 
-      if (
-        !manuallyPausedRef.current
-      ) {
-        recoveryStationIdRef.current =
-          currentStation.id;
+  setPlaying(true);
 
-        recoverCurrentStation();
-      }
-    }
+  setRecovering(false);
+
+  setStreamHealth(
+    "GOOD"
+  );
+
+  console.log(
+    "PLAYING:",
+    currentStation.name
+  );
+
+} catch (error) {
+
+  if (
+    error?.name ===
+    "AbortError"
+  ) {
+    console.log(
+      "PLAY BUTTON ABORTED: REQUEST SUPERSEDED"
+    );
+
+    return;
+  }
+
+  console.error(
+    "PLAY BUTTON FAILED:",
+    error
+  );
+
+  setPlaying(false);
+
+  if (
+    isUnplayableStream(
+      audio,
+      error
+    )
+  ) {
+    await skipFailedStation(
+      currentStation
+    );
+
+    return;
+  }
+
+  if (
+    !manuallyPausedRef.current
+  ) {
+    recoveryStationIdRef.current =
+      currentStation.id;
+
+    recoverCurrentStation();
+  }
+}
   }
 
   /*
