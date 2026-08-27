@@ -4173,6 +4173,11 @@ async function searchStations() {
         </div>
       </header>
 
+      <div className="desktop-radio-layout">
+
+ {/* ================= LEFT ================= */}
+  <div className="desktop-player-column">
+
       {/* LCD DISPLAY */}
       <div className="lcd-container">
 
@@ -4582,7 +4587,7 @@ async function searchStations() {
         </button>
       </section>
 
-      {/* VOLUME */}
+          {/* VOLUME */}
 
       <section className="volume-panel">
         <button
@@ -4640,6 +4645,13 @@ async function searchStations() {
           %
         </span>
       </section>
+
+      </div>
+
+ {/* ================= RIGHT ================= */}
+      <div className="desktop-stations-column">
+
+      
 
       {/* LOCATION */}
 
@@ -5001,6 +5013,8 @@ async function searchStations() {
             )
           )}
       </section>
+      </div>
+      </div>
 
       {/* =====================================================
           AUDIO ENGINE
@@ -5153,6 +5167,7 @@ async function searchStations() {
       </div>
     </div>
   )}
+  
 
 
       <audio

@@ -2791,7 +2791,7 @@ select {
    * Hidden
    */
   opacity: 0;
-  visibility: hidden;
+  /* visibility: hidden; */
   pointer-events: none;
 
   transform:
@@ -3391,3 +3391,582 @@ select {
 
 
 
+
+/* =========================================================
+   Desktop view
+   ========================================================= */
+
+/* =========================================================
+   DESKTOP COMPLETE LAYOUT
+   LCD LEFT + STATIONS RIGHT + FIXED PLAYER BOTTOM CENTER
+   ========================================================= */
+
+@media (min-width: 1000px) {
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+  }
+
+  .car-stereo {
+    position: relative;
+
+    width: calc(100vw - 32px);
+    height: calc(100vh - 32px);
+
+    margin: 16px;
+    padding: 18px;
+
+    display: flex;
+    flex-direction: column;
+
+    overflow: hidden;
+  }
+
+
+  /* =======================================================
+     MAIN 2-COLUMN LAYOUT
+     ======================================================= */
+
+  .desktop-radio-layout {
+    flex: 1;
+
+    min-width: 0;
+    min-height: 0;
+
+    display: grid;
+
+    grid-template-columns:
+      minmax(420px, 0.9fr)
+      minmax(520px, 1.1fr);
+
+    gap: 16px;
+
+    margin-top: 14px;
+
+    /* Reserve area for fixed bottom controller */
+    padding-bottom: 92px;
+
+    overflow: hidden;
+  }
+
+
+  /* =======================================================
+     LEFT SIDE - LCD
+     ======================================================= */
+
+  .desktop-player-column {
+    min-width: 0;
+    min-height: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    overflow: hidden;
+
+    padding-right: 6px;
+  }
+
+  .desktop-player-column .lcd-container {
+    flex-shrink: 0;
+  }
+
+  .desktop-player-column .lcd {
+    margin-top: 25px;
+  }
+
+
+  /* =======================================================
+     RIGHT SIDE
+     SEARCH + FILTERS FIXED
+     STATION ROWS SCROLL
+     ======================================================= */
+
+  .desktop-stations-column {
+    min-width: 0;
+    min-height: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    overflow: hidden;
+
+    border: 1px solid var(--radio-border);
+    border-radius: 10px;
+
+    background: rgba(0, 0, 0, 0.08);
+  }
+
+
+  /* =======================================================
+     FM SEARCH - FIXED
+     ======================================================= */
+
+  .desktop-stations-column .station-search {
+    flex: 0 0 auto;
+
+    width: 100%;
+
+    margin: 0;
+    padding: 12px 14px 8px;
+
+    display: flex;
+    align-items: center;
+
+    gap: 8px;
+
+    background: var(--radio-bg);
+
+    border-bottom: none;
+
+    position: relative;
+
+    z-index: 30;
+  }
+
+  .desktop-stations-column .station-search input {
+    flex: 1;
+
+    min-width: 0;
+
+    height: 38px;
+
+    background: var(--button-bg);
+  }
+
+  .desktop-stations-column .station-search button {
+    height: 38px;
+
+    flex-shrink: 0;
+  }
+
+
+  /* =======================================================
+     ALL / FAVORITES / REGION - FIXED
+     ======================================================= */
+
+  .desktop-stations-column .list-header {
+    flex: 0 0 auto;
+
+    width: 100%;
+
+    margin: 0;
+
+    padding: 8px 14px 12px;
+
+    display: flex;
+    align-items: center;
+
+    flex-wrap: nowrap;
+
+    gap: 10px;
+
+    background: var(--radio-bg);
+
+    border-bottom:
+      1px solid var(--radio-border);
+
+    position: relative;
+
+    z-index: 29;
+  }
+
+
+  /* ALL + FAVORITES */
+
+  .desktop-stations-column .station-filter {
+    display: flex;
+    align-items: center;
+
+    flex-shrink: 0;
+
+    gap: 6px;
+  }
+
+  .desktop-stations-column .station-filter button {
+    min-height: 32px;
+
+    padding: 6px 10px;
+
+    border-radius: 5px;
+
+    white-space: nowrap;
+  }
+
+  .desktop-stations-column
+  .station-filter button.active {
+    background: var(--button-bg);
+
+    color: var(--accent);
+
+    text-decoration: none;
+
+    border:
+      1px solid var(--radio-border);
+  }
+
+
+  /* =======================================================
+     REGION
+     ======================================================= */
+
+  .desktop-stations-column .region-selector {
+    margin-left: auto;
+
+    display: flex;
+    align-items: center;
+
+    flex-shrink: 0;
+
+    gap: 8px;
+  }
+
+  .desktop-stations-column
+  .region-selector > span {
+    white-space: nowrap;
+  }
+
+  .desktop-stations-column
+  .region-selector select {
+    min-width: 150px;
+    max-width: 210px;
+
+    height: 34px;
+  }
+
+
+  /* =======================================================
+     ONLY THE STATION LIST SCROLLS
+     ======================================================= */
+
+  .desktop-stations-column .station-list {
+    flex: 1 1 auto;
+
+    min-width: 0;
+    min-height: 0;
+
+    width: 100%;
+
+    margin: 0;
+    padding: 0 0 20px;
+
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    overscroll-behavior: contain;
+
+    scrollbar-width: thin;
+
+    scrollbar-color:
+      var(--radio-border)
+      transparent;
+  }
+
+
+  /* Chrome scrollbar */
+
+  .desktop-stations-column
+  .station-list::-webkit-scrollbar {
+    width: 7px;
+  }
+
+  .desktop-stations-column
+  .station-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .desktop-stations-column
+  .station-list::-webkit-scrollbar-thumb {
+    background: var(--radio-border);
+
+    border-radius: 10px;
+  }
+
+  .desktop-stations-column
+  .station-list::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+
+
+  /* =======================================================
+     STATION ROWS
+     ======================================================= */
+
+  .desktop-stations-column .station-row {
+    min-height: 58px;
+
+    padding: 9px 14px;
+
+    border-bottom:
+      1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .desktop-stations-column
+  .station-row:hover {
+    background: var(--row-hover);
+  }
+
+  .desktop-stations-column
+  .station-row.selected {
+    background: var(--row-selected);
+
+    border-left:
+      4px solid var(--accent);
+  }
+
+  .desktop-stations-column
+  .station-info strong {
+    font-size: 13px;
+  }
+
+  .desktop-stations-column
+  .station-info small {
+    font-size: 10px;
+  }
+
+  .desktop-stations-column .codec {
+    font-size: 10px;
+  }
+
+
+  /* =======================================================
+     BOTTOM MUSIC PLAYER
+     ======================================================= */
+
+  .controls {
+    position: absolute;
+
+    left: 50%;
+    bottom: 18px;
+
+    transform: translateX(-50%);
+
+    width: min(
+      520px,
+      calc(100% - 40px)
+    );
+
+    min-height: 68px;
+
+    margin: 0;
+    padding: 10px 18px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    gap: 10px;
+
+    background: var(--radio-bg);
+
+    border:
+      1px solid var(--radio-border);
+
+    border-radius: 16px;
+
+    box-shadow:
+      0 10px 30px
+        rgba(0, 0, 0, 0.42),
+
+      0 2px 8px
+        rgba(0, 0, 0, 0.25),
+
+      inset 0 1px 0
+        rgba(255, 255, 255, 0.05);
+
+    backdrop-filter: blur(14px);
+
+    -webkit-backdrop-filter:
+      blur(14px);
+
+    z-index: 1000;
+  }
+
+
+  /* =======================================================
+     PLAYER BUTTONS
+     ======================================================= */
+
+  .controls button {
+    width: 42px;
+    height: 42px;
+
+    padding: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border: none;
+
+    border-radius: 50%;
+
+    background: transparent;
+
+    color: var(--text);
+
+    box-shadow: none;
+
+    font-size: 16px;
+    font-weight: bold;
+
+    cursor: pointer;
+
+    transition:
+      transform 0.15s ease,
+      background 0.18s ease,
+      color 0.18s ease,
+      opacity 0.18s ease;
+  }
+
+  .controls button:hover:not(:disabled) {
+    background:
+      rgba(255, 255, 255, 0.08);
+
+    color: var(--accent);
+
+    transform: scale(1.08);
+  }
+
+  .controls button:active:not(:disabled) {
+    transform: scale(0.94);
+
+    box-shadow: none;
+  }
+
+  .controls button:disabled {
+    opacity: 0.3;
+
+    cursor: not-allowed;
+  }
+
+
+  /* =======================================================
+     MAIN PLAY BUTTON
+     ======================================================= */
+
+  .controls .play {
+    width: 54px;
+    height: 54px;
+
+    background: var(--accent);
+
+    color: var(--app-bg);
+
+    font-size: 20px;
+
+    box-shadow:
+      0 4px 14px
+        rgba(0, 0, 0, 0.35),
+
+      0 0 12px
+        var(--accent-glow);
+  }
+
+  .controls .play:hover:not(:disabled) {
+    background: var(--accent);
+
+    color: var(--app-bg);
+
+    transform: scale(1.08);
+  }
+
+
+  /* =======================================================
+     VOLUME - FIXED BOTTOM RIGHT
+     ======================================================= */
+
+  .volume-panel {
+    position: absolute;
+
+    right: 28px;
+    bottom: 31px;
+
+    width: 220px;
+
+    margin: 0;
+
+    display: flex;
+    align-items: center;
+
+    gap: 10px;
+
+    z-index: 1001;
+  }
+
+  .mute-button {
+    width: 34px;
+    height: 34px;
+
+    flex-shrink: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border: none;
+
+    border-radius: 50%;
+
+    background: transparent;
+
+    color: var(--text);
+
+    font-size: 16px;
+
+    cursor: pointer;
+  }
+
+  .mute-button:hover {
+    background:
+      rgba(255, 255, 255, 0.08);
+
+    color: var(--accent);
+  }
+
+  .volume-slider {
+    flex: 1;
+
+    min-width: 0;
+
+    cursor: pointer;
+
+    accent-color: var(--accent);
+  }
+
+  .volume-value {
+    min-width: 38px;
+
+    text-align: right;
+
+    font-size: 10px;
+    font-weight: bold;
+
+    opacity: 0.65;
+  }
+
+
+  /* =======================================================
+     PRESETS - HIDDEN ON DESKTOP
+     ======================================================= */
+
+  .preset-panel {
+    display: none;
+  }
+
+
+  /* =======================================================
+     MINI PLAYER
+     EXISTING BEHAVIOUR UNTOUCHED
+     ======================================================= */
+
+  .mini-player {
+    /* intentionally untouched */
+  }
+}
