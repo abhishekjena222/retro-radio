@@ -408,45 +408,158 @@ function App() {
   // Open shared station links inside this RadioWave deployment.
   // The station is selected automatically; playback may require a tap
   // because browsers block audio autoplay in many situations.
-  useEffect(() => {
-    if (sharedStationHandledRef.current) return;
+  // useEffect(() => {
+  //   if (sharedStationHandledRef.current) return;
 
-    const sharedStationId = new URLSearchParams(
-      window.location.search
-    ).get("station");
+  //   const sharedStationId = new URLSearchParams(
+  //     window.location.search
+  //   ).get("station");
 
-    if (!sharedStationId || loading) return;
+  //   if (!sharedStationId || loading) return;
 
-    sharedStationHandledRef.current = true;
+  //   sharedStationHandledRef.current = true;
 
-    const openSharedStation = async () => {
-      try {
-        let station = stations.find(
-          (item) => item.id === sharedStationId
-        );
+  //   const openSharedStation = async () => {
+  //     try {
+  //       let station = stations.find(
+  //         (item) => item.id === sharedStationId
+  //       );
 
-        if (!station) {
-          const response = await fetch(
-            `https://de1.api.radio-browser.info/json/stations/byuuid/${encodeURIComponent(sharedStationId)}`
-          );
-          if (!response.ok) throw new Error("Station lookup failed");
-          const result = await response.json();
-          const rawStation = Array.isArray(result) ? result[0] : result;
-          if (!rawStation?.stationuuid) throw new Error("Station not found");
-          station = normalizeStation(rawStation);
-        }
+  //       if (!station) {
+  //         const response = await fetch(
+  //           `https://de1.api.radio-browser.info/json/stations/byuuid/${encodeURIComponent(sharedStationId)}`
+  //         );
+  //         if (!response.ok) throw new Error("Station lookup failed");
+  //         const result = await response.json();
+  //         const rawStation = Array.isArray(result) ? result[0] : result;
+  //         console.log("Shared station ID:", sharedStationId);
+  //         console.log("Radio Browser API result:", result);
+  //         if (!rawStation?.stationuuid) throw new Error("Station not found");
+  //         station = normalizeStation(rawStation);
+  //       }
 
-        setActiveView("discover");
-        //setPlayerExpanded(true);
-        await playStation(station);
-      } catch (error) {
-        console.error("Unable to open shared RadioWave station:", error);
-        sharedStationHandledRef.current = false;
-      }
-    };
+  //       setActiveView("discover");
+  //       //setPlayerExpanded(true);
+  //       await playStation(station);
+  //     } catch (error) {
+  //       console.error("Unable to open shared RadioWave station:", error);
+  //       sharedStationHandledRef.current = false;
+  //     }
+  //   };
 
-    openSharedStation();
-  }, [stations, loading]);
+  //   openSharedStation();
+  // }, [stations, loading]);
+
+
+useEffect(() => {
+  if (sharedStationHandledRef.current) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const sharedStationId = params.get("station")?.trim();
+
+  if (!sharedStationId || loading) return;
+
+  sharedStationHandledRef.current = true;
+
+  const openSharedStation = async () => {
+    
+try {
+  console.log("SHARED STATION UUID FROM URL:", sharedStationId);
+
+  let station = stations.find((item) =>
+    String(item.id || item.stationuuid || "").toLowerCase() ===
+    sharedStationId.toLowerCase()
+  );
+
+  if (!station) {
+    const lookupUrl = new URL(
+      "https://de1.api.radio-browser.info/json/stations/byuuid"
+    );
+    lookupUrl.searchParams.set("uuids", sharedStationId.trim());
+
+    console.log("LOOKING UP SHARED UUID:", lookupUrl.toString());
+
+    const response = await fetch(lookupUrl.toString());
+    const responseText = await response.text();
+
+    console.log("UUID LOOKUP HTTP STATUS:", response.status);
+    console.log("UUID LOOKUP RAW RESPONSE:", responseText);
+
+    if (!response.ok) {
+      throw new Error(`UUID lookup failed: HTTP ${response.status}`);
+    }
+
+    const result = JSON.parse(responseText);
+    const rawStation = Array.isArray(result)
+      ? result.find((item) =>
+          String(item?.stationuuid || "").toLowerCase() ===
+          sharedStationId.trim().toLowerCase()
+        )
+      : null;
+
+    
+if (rawStation) {
+  station = normalizeStation(rawStation);
+} else {
+  // Radio Browser does not have this UUID.
+  // Recover station details from the shared app URL.
+  const params = new URLSearchParams(window.location.search);
+
+  const sharedName = params.get("name");
+  const sharedCountry = params.get("country");
+  const sharedStream = params.get("stream");
+
+  if (!sharedStream) {
+    throw new Error(
+      `Station not found in Radio Browser and no fallback stream was shared.`
+    );
+  }
+
+  const streamUrl = new URL(sharedStream);
+
+  if (!["http:", "https:"].includes(streamUrl.protocol)) {
+    throw new Error("Invalid shared station stream URL.");
+  }
+
+  station = {
+    id: sharedStationId,
+    name: sharedName || "Shared Radio Station",
+    country: sharedCountry || "",
+    state: "",
+    language: "",
+    codec: "",
+    bitrate: 0,
+    streamUrl: sharedStream,
+    favicon: null,
+    homepage: null,
+    tags: "",
+  };
+
+  console.log("USING SHARED STREAM FALLBACK:", station);
+}
+
+  }
+
+  if (!station?.id || !station?.streamUrl) {
+    throw new Error("Station found, but ID or stream URL is missing.");
+  }
+
+  console.log("SHARED STATION FOUND:", station);
+
+  setActiveView("discover");
+  setPlayerExpanded(false);
+  await playStation(station);
+
+} catch (error) {
+  console.error("SHARED STATION RESOLUTION FAILED:", error);
+  sharedStationHandledRef.current = false;
+}
+
+  };
+
+  openSharedStation();
+}, [stations, loading]);
+
 
   useEffect(() => {
     return () => {
@@ -1959,55 +2072,60 @@ useEffect(() => {
   }
 
 
-  function getStationShareUrl(station) {
-    if (!station?.id) return window.location.href;
+  
+function getStationShareUrl(station) {
+  if (!station?.id) return window.location.href;
 
-    const shareUrl = new URL(
-      window.location.pathname,
-      window.location.origin
-    );
-    shareUrl.searchParams.set("station", station.id);
-    return shareUrl.toString();
-  }
+  const shareUrl = new URL(
+    window.location.pathname,
+    window.location.origin
+  );
+
+  shareUrl.searchParams.set("station", station.id);
+  shareUrl.searchParams.set("name", station.name || "Radio Station");
+  shareUrl.searchParams.set("country", station.country || "");
+  shareUrl.searchParams.set("stream", station.streamUrl || "");
+
+  return shareUrl.toString();
+}
+
 
   async function shareStation(station) {
-    if (!station) return;
+  if (!station) return;
 
-    const appUrl = getStationShareUrl(station);
-    const shareText = [
-      `Listen to ${station.name || "this radio station"} on RadioWave`,
-      station.country || station.state || "",
-    ].filter(Boolean).join(" · ");
+  console.log("STATION BEING SHARED:", station);
+console.log("SHARED ID:", station?.id);
+console.log("SHARED STATIONUUID:", station?.stationuuid);
+console.log("SHARED STREAM:", station?.streamUrl);
 
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: `${station.name || "Radio station"} | RadioWave`,
-          text: shareText,
-          url: appUrl,
-        });
-        return;
-      }
+  const appUrl = getStationShareUrl(station);
+  if (!appUrl) return;
 
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(appUrl);
-        window.alert("RadioWave station link copied!");
-        return;
-      }
+  const shareText = `Listen to ${station.name || "this radio station"} on RadioWave`;
 
-      window.prompt("Copy this RadioWave station link:", appUrl);
-    } catch (error) {
-      if (error?.name !== "AbortError") {
-        console.error("Unable to share station:", error);
-        try {
-          await navigator.clipboard.writeText(appUrl);
-          window.alert("RadioWave station link copied!");
-        } catch {
-          window.prompt("Copy this RadioWave station link:", appUrl);
-        }
-      }
+  try {
+    if (navigator.share) {
+      await navigator.share({
+        title: `${station.name || "Radio station"} | RadioWave`,
+        text: shareText,
+        url: appUrl,
+      });
+      return;
+    }
+
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(appUrl);
+      window.alert("RadioWave station link copied!");
+      return;
+    }
+
+    window.prompt("Copy this RadioWave station link:", appUrl);
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      console.error("Unable to share station:", error);
     }
   }
+}
 
 
   function handleStationSearchKeyDown(
