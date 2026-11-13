@@ -36,6 +36,7 @@ function App() {
   const tunerAnimationRef = useRef(null);
 
   const stationLoadRequestRef = useRef(0);
+  const sharedStationHandledRef = useRef(false);
 
   const recoveryStationIdRef = useRef(null);
 
@@ -403,6 +404,49 @@ function App() {
     loadStations();
     loadRegionStations();
   }, []);
+
+  // Open shared station links inside this RadioWave deployment.
+  // The station is selected automatically; playback may require a tap
+  // because browsers block audio autoplay in many situations.
+  useEffect(() => {
+    if (sharedStationHandledRef.current) return;
+
+    const sharedStationId = new URLSearchParams(
+      window.location.search
+    ).get("station");
+
+    if (!sharedStationId || loading) return;
+
+    sharedStationHandledRef.current = true;
+
+    const openSharedStation = async () => {
+      try {
+        let station = stations.find(
+          (item) => item.id === sharedStationId
+        );
+
+        if (!station) {
+          const response = await fetch(
+            `https://de1.api.radio-browser.info/json/stations/byuuid/${encodeURIComponent(sharedStationId)}`
+          );
+          if (!response.ok) throw new Error("Station lookup failed");
+          const result = await response.json();
+          const rawStation = Array.isArray(result) ? result[0] : result;
+          if (!rawStation?.stationuuid) throw new Error("Station not found");
+          station = normalizeStation(rawStation);
+        }
+
+        setActiveView("discover");
+        setPlayerExpanded(true);
+        await playStation(station);
+      } catch (error) {
+        console.error("Unable to open shared RadioWave station:", error);
+        sharedStationHandledRef.current = false;
+      }
+    };
+
+    openSharedStation();
+  }, [stations, loading]);
 
   useEffect(() => {
     return () => {
@@ -1912,6 +1956,57 @@ useEffect(() => {
       (favorite) =>
         favorite.id === station.id
     );
+  }
+
+
+  function getStationShareUrl(station) {
+    if (!station?.id) return window.location.href;
+
+    const shareUrl = new URL(
+      window.location.pathname,
+      window.location.origin
+    );
+    shareUrl.searchParams.set("station", station.id);
+    return shareUrl.toString();
+  }
+
+  async function shareStation(station) {
+    if (!station) return;
+
+    const appUrl = getStationShareUrl(station);
+    const shareText = [
+      `Listen to ${station.name || "this radio station"} on RadioWave`,
+      station.country || station.state || "",
+    ].filter(Boolean).join(" · ");
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `${station.name || "Radio station"} | RadioWave`,
+          text: shareText,
+          url: appUrl,
+        });
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(appUrl);
+        window.alert("RadioWave station link copied!");
+        return;
+      }
+
+      window.prompt("Copy this RadioWave station link:", appUrl);
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        console.error("Unable to share station:", error);
+        try {
+          await navigator.clipboard.writeText(appUrl);
+          window.alert("RadioWave station link copied!");
+        } catch {
+          window.prompt("Copy this RadioWave station link:", appUrl);
+        }
+      }
+    }
   }
 
 
@@ -4355,7 +4450,7 @@ try {
         <section className="location-search-panel"><div><span className="location-icon">⌖</span><div><strong>Listen from somewhere else</strong><p>Find local stations in any city or country.</p></div></div><div className="location-search-input"><input value={searchLocation} onChange={e => setSearchLocation(e.target.value)} onKeyDown={e => e.key === "Enter" && searchCustomLocation()} placeholder="Enter a city or country"/><button onClick={searchCustomLocation} disabled={searchingLocation}>{searchingLocation ? "Finding…" : "Explore location"}</button></div></section>
       </main>
 
-      <aside className={`now-playing-panel ${playerExpanded ? "expanded" : "collapsed"}`}><div className="now-playing-top" onClick={() => setPlayerExpanded(v => !v)}><span>NOW PLAYING <small className="player-expand-hint">{playerExpanded ? "− CLOSE" : "+ PLAYER"}</small></span><span className="live-tag"><i/> {playing ? "ON AIR" : recovering ? "RECONNECTING" : "READY"}</span></div><div className="hero-art">{currentStation?.favicon ? <img src={currentStation.favicon} alt="Station artwork" onError={e => { e.currentTarget.style.display = "none"; }}/> : <div className="hero-art-fallback">♫</div>}<div className="hero-art-overlay">RADIOWAVE <span>LIVE AUDIO</span></div></div><div className="now-playing-info"><span className="eyebrow">{currentStation ? (currentStation.country || currentStation.state || "LIVE STATION") : "YOUR PERSONAL RADIO"}</span><h2>{currentStation?.name || "Choose a station"}</h2><p>{currentStation ? `${getFrequencyDisplay(currentStation)}${currentStation.codec ? ` · ${currentStation.codec}` : ""}` : "Your next favourite sound is waiting."}</p></div><div className="player-status-row"><span><i className={`status-dot ${playing ? "active" : ""}`}/>{playing ? "Streaming live" : recovering ? "Trying to reconnect" : "Not playing"}</span><span>{streamHealth}</span></div><div className="player-controls"><button onClick={previousStation} disabled={scanning || !online} aria-label="Previous station">|◀</button><button className="main-play" onClick={togglePlay} disabled={!online || !currentStation} aria-label={playing ? "Pause" : "Play"}>{scanning ? "■" : playing ? "Ⅱ" : "▶"}</button><button onClick={nextStation} disabled={scanning || !online} aria-label="Next station">▶|</button></div><div className="volume-control"><span>{muted || volume === 0 ? "◖" : "◖))"}</span><input type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))}/><button onClick={() => setMuted(v => !v)}>{muted ? "Muted" : `${Math.round(volume * 100)}%`}</button></div><div className="player-divider"/><div className="player-quick-actions"><button onClick={() => currentStation && toggleFavorite(currentStation)} disabled={!currentStation}>{currentStation && isFavorite(currentStation) ? "♥ Saved" : "♡ Save station"}</button><button onClick={() => { if (!currentStation) return; const emptySlot = presets.findIndex(p => !p); if (emptySlot >= 0) savePreset(emptySlot); else setActiveView("presets"); }} disabled={!currentStation}>＋ Preset</button></div><div className="signal-card"><div><span>STREAM QUALITY</span><strong>{streamHealth}</strong></div><div className="signal-bars">{[1,2,3,4,5].map(n => <i key={n} className={n <= signalLevel ? "lit" : ""}/>)}</div></div></aside>
+      <aside className={`now-playing-panel ${playerExpanded ? "expanded" : "collapsed"}`}><div className="now-playing-top" onClick={() => setPlayerExpanded(v => !v)}><span>NOW PLAYING <small className="player-expand-hint">{playerExpanded ? "− CLOSE" : "+ PLAYER"}</small></span><div className="mini-player-top-actions"><button className={`mini-player-action favorite ${currentStation && isFavorite(currentStation) ? "liked" : ""}`} onClick={event => { event.stopPropagation(); currentStation && toggleFavorite(currentStation); }} disabled={!currentStation} aria-label={currentStation && isFavorite(currentStation) ? "Remove station from favorites" : "Add station to favorites"} title="Favorite station">{currentStation && isFavorite(currentStation) ? "♥" : "♡"}</button><button className="mini-player-action" onClick={event => { event.stopPropagation(); shareStation(currentStation); }} disabled={!currentStation} aria-label="Share station" title="Share station">↗</button><span className="live-tag"><i/> {playing ? "ON AIR" : recovering ? "RECONNECTING" : "READY"}</span></div></div><div className="hero-art">{currentStation?.favicon ? <img src={currentStation.favicon} alt="Station artwork" onError={e => { e.currentTarget.style.display = "none"; }}/> : <div className="hero-art-fallback">♫</div>}<div className="hero-art-overlay">RADIOWAVE <span>LIVE AUDIO</span></div></div><div className="now-playing-info"><span className="eyebrow">{currentStation ? (currentStation.country || currentStation.state || "LIVE STATION") : "YOUR PERSONAL RADIO"}</span><h2>{currentStation?.name || "Choose a station"}</h2><p>{currentStation ? `${getFrequencyDisplay(currentStation)}${currentStation.codec ? ` · ${currentStation.codec}` : ""}` : "Your next favourite sound is waiting."}</p></div><div className="player-status-row"><span><i className={`status-dot ${playing ? "active" : ""}`}/>{playing ? "Streaming live" : recovering ? "Trying to reconnect" : "Not playing"}</span><span>{streamHealth}</span></div><div className="player-controls"><button onClick={previousStation} disabled={scanning || !online} aria-label="Previous station">|◀</button><button className="main-play" onClick={togglePlay} disabled={!online || !currentStation} aria-label={playing ? "Pause" : "Play"}>{scanning ? "■" : playing ? "Ⅱ" : "▶"}</button><button onClick={nextStation} disabled={scanning || !online} aria-label="Next station">▶|</button></div><div className="volume-control"><span>{muted || volume === 0 ? "◖" : "◖))"}</span><input type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))}/><button onClick={() => setMuted(v => !v)}>{muted ? "Muted" : `${Math.round(volume * 100)}%`}</button></div><div className="player-divider"/><div className="player-quick-actions"><button onClick={() => currentStation && toggleFavorite(currentStation)} disabled={!currentStation}>{currentStation && isFavorite(currentStation) ? "♥ Saved" : "♡ Save station"}</button><button onClick={() => { if (!currentStation) return; const emptySlot = presets.findIndex(p => !p); if (emptySlot >= 0) savePreset(emptySlot); else setActiveView("presets"); }} disabled={!currentStation}>＋ Preset</button></div><div className="signal-card"><div><span>STREAM QUALITY</span><strong>{streamHealth}</strong></div><div className="signal-bars">{[1,2,3,4,5].map(n => <i key={n} className={n <= signalLevel ? "lit" : ""}/>)}</div></div></aside>
 
       {showPresets && <div className="modal-backdrop" onClick={() => setShowPresets(false)}><div className="modal-card" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={() => setShowPresets(false)}>×</button><h2>Your presets</h2><p>Choose a saved station.</p>{presets.map((station,index) => <button className="modal-preset" key={index} disabled={!station} onClick={() => { tunePreset(index); setShowPresets(false); }}>{`0${index+1}`} · {station?.name || "Empty slot"}</button>)}</div></div>}
       <nav className="mobile-bottom-nav" aria-label="Main navigation">
