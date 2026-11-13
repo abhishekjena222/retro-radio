@@ -48,3 +48,47 @@ html,body,#root{width:100%;min-height:100%;margin:0}
   .mobile-bottom-nav button{border:0;background:transparent;color:#7f8d83;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 2px;border-radius:10px}.mobile-bottom-nav button span{font-size:19px;line-height:1.1}.mobile-bottom-nav button small{font-size:9px}.mobile-bottom-nav button.active{color:var(--mint);background:#23342a}
 }
 @media(max-width:380px){.main-content{padding-left:12px;padding-right:12px}.now-playing-panel{left:7px;right:7px}.station-art{width:50px;height:50px;flex-basis:50px}.preset-modern-grid{grid-template-columns:1fr}}
+
+
+/* Compact mini-player refinement: keep playback controls visible without
+   letting the floating player cover the station directory. */
+@media (min-width:761px) and (max-width:1150px) {
+  .now-playing-panel.collapsed {
+    width:min(330px,calc(100vw - 220px));
+    max-height:none;
+    overflow:hidden;
+    padding:11px 13px;
+    display:grid;
+    grid-template-columns:42px minmax(0,1fr) auto;
+    grid-template-rows:auto auto;
+    column-gap:10px;
+    row-gap:4px;
+    align-items:center;
+    border-radius:14px;
+  }
+  .now-playing-panel.collapsed .now-playing-top {grid-column:1/-1;margin:0;cursor:pointer}
+  .now-playing-panel.collapsed .hero-art {display:grid;width:42px;height:42px;aspect-ratio:1;grid-column:1;grid-row:2;border-radius:9px}
+  .now-playing-panel.collapsed .hero-art-fallback {font-size:24px}
+  .now-playing-panel.collapsed .hero-art-overlay {display:none}
+  .now-playing-panel.collapsed .now-playing-info {grid-column:2;grid-row:2;min-width:0;padding:0}
+  .now-playing-panel.collapsed .now-playing-info .eyebrow {font-size:7px;margin:0 0 3px}
+  .now-playing-panel.collapsed .now-playing-info h2 {font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .now-playing-panel.collapsed .now-playing-info p {font-size:9px;margin:3px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .now-playing-panel.collapsed .player-controls {grid-column:3;grid-row:2;gap:4px;padding:0}
+  .now-playing-panel.collapsed .player-controls button {font-size:13px;padding:5px 2px}
+  .now-playing-panel.collapsed .player-controls .main-play {width:36px;height:36px}
+  .now-playing-panel.collapsed .player-status-row,.now-playing-panel.collapsed .volume-control,.now-playing-panel.collapsed .player-divider,.now-playing-panel.collapsed .player-quick-actions,.now-playing-panel.collapsed .signal-card {display:none}
+  .now-playing-panel.expanded {width:min(360px,calc(100vw - 220px));max-height:calc(100dvh - 36px);overflow:auto}
+}
+
+@media (max-width:760px) {
+  .now-playing-panel.collapsed {padding:8px 10px;grid-template-columns:42px minmax(0,1fr) auto;column-gap:9px;row-gap:3px}
+  .now-playing-panel.collapsed .hero-art {width:42px;height:42px}
+  .now-playing-panel.collapsed .now-playing-info h2 {font-size:11px}
+  .now-playing-panel.collapsed .player-controls {gap:3px}
+  .now-playing-panel.collapsed .player-controls .main-play {width:35px;height:35px;min-width:35px}
+  .now-playing-panel.expanded {max-height:min(42dvh,340px);padding:11px 13px;row-gap:6px}
+  .now-playing-panel.expanded .hero-art {width:52px;height:52px;grid-row:2}
+  .now-playing-panel.expanded .now-playing-info h2 {font-size:13px}
+  .now-playing-panel.expanded .player-controls {gap:22px}
+}
