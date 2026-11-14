@@ -1083,6 +1083,20 @@ useEffect(() => {
   });
 }
 
+// function handleLogoClick() {
+//   window.history.replaceState(
+//     {},
+//     "",
+//     window.location.pathname
+//   );
+
+//   setActiveView("discover");
+// }
+
+function handleLogoClick() {
+  window.location.href = window.location.pathname;
+}
+
   function getActiveStationList() {
     if (stationFilter === "favorites") {
       return favorites;
@@ -4545,7 +4559,7 @@ try {
   return (
     <div className="radio-app">
       <aside className="sidebar">
-        <div className="sidebar-brand"><span className="brand-mark">r.</span><span>radio<span className="brand-light">wave</span></span></div>
+        <div className="sidebar-brand" onClick={handleLogoClick}><span className="brand-mark">r.</span><span>radio<span className="brand-light">wave</span></span></div>
         <div className="sidebar-label">LIBRARY</div>
         <button className={`nav-item ${activeView === "discover" ? "active" : ""}`} onClick={() => { setActiveView("discover"); setStationFilter("all"); }}><span>⌂</span> Discover</button>
         <button className={`nav-item ${activeView === "favorites" ? "active" : ""}`} onClick={() => { setActiveView("favorites"); setStationFilter("favorites"); setStationSearch(""); setSearchResults([]); }}><span>♡</span> Favorites <small>{favorites.length}</small></button>
