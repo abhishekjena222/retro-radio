@@ -25,13 +25,24 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            reels/package-lock.json
 
-      - name: Install dependencies
+      - name: Install main app dependencies
         run: npm ci
 
-      - name: Build
+      - name: Install Reels dependencies
+        working-directory: reels
+        run: npm ci
+
+      - name: Build main RadioWave app
+        run: npm run build
+
+      - name: Build Reels app
+        working-directory: reels
         run: npm run build
 
       - name: Setup Pages
