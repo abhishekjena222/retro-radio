@@ -207,6 +207,20 @@ function App() {
     }
   }, [active, stations, playing]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    useEffect(() => {
+    if (!playing || !["CONNECTING", "BUFFERING"].includes(streamStatus)) return;
+    const timeoutId = window.setTimeout(() => {
+      if (settings.autoSkip) {
+        skipBrokenStation();
+      } else {
+        setPlaying(false);
+        setStreamStatus("UNAVAILABLE");
+        showNotice("This station is taking too long to respond");
+      }
+    }, 15000);
+    return () => window.clearTimeout(timeoutId);
+  }, [playing, streamStatus, active, settings.autoSkip, showNotice]);
+
   useEffect(() => {
     if (!station) return;
     setHistory(current => [
@@ -437,6 +451,14 @@ function App() {
                   <div className="station-backdrop" style={{ backgroundImage: `url("${station.favicon}")` }} />
                   <img className="station-logo" src={station.favicon} alt="" onError={e => { e.currentTarget.style.display = "none"; }} />
                 </>}
+                {playing && ["CONNECTING", "BUFFERING", "SKIPPING"].includes(streamStatus) && (
+                  <div className="stream-overlay" role="status" aria-live="polite">
+                    <span className="stream-loader"><LoaderCircle size={28} /></span>
+                    <strong>{streamStatus === "BUFFERING" ? "Buffering stream…" : streamStatus === "SKIPPING" ? "Finding another station…" : "Connecting to station…"}</strong>
+                    <span>Please wait a moment</span>
+                  </div>
+                )}
+
                 <div className="art-glow" />
                 <div className="art-ring ring-one" />
                 <div className="art-ring ring-two" />
