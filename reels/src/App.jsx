@@ -83,6 +83,9 @@ function App() {
     const saved = localStorage.getItem(VOLUME_KEY);
     return saved === null ? 0.8 : Number(saved);
   });
+  const [isMobileLayout, setIsMobileLayout] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 650px)").matches
+  );
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState("");
   const audioRef = useRef(null);
@@ -164,9 +167,19 @@ function App() {
   }, [settings]);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 650px)");
+    const updateLayout = () => setIsMobileLayout(mediaQuery.matches);
+    updateLayout();
+    mediaQuery.addEventListener?.("change", updateLayout);
+    return () => mediaQuery.removeEventListener?.("change", updateLayout);
+  }, []);
+
+  useEffect(() => {
+    // Mobile uses full element volume so the phone's hardware volume buttons
+    // control the listening level. Keep the user's desktop slider preference.
     localStorage.setItem(VOLUME_KEY, String(volume));
-    if (audioRef.current) audioRef.current.volume = volume;
-  }, [volume]);
+    if (audioRef.current) audioRef.current.volume = isMobileLayout ? 1 : volume;
+  }, [volume, isMobileLayout]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -191,20 +204,6 @@ function App() {
       setStreamStatus("READY");
     }
   }, [active, stations, playing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!playing || !["CONNECTING", "BUFFERING"].includes(streamStatus)) return;
-    const timeoutId = window.setTimeout(() => {
-      if (settings.autoSkip) {
-        skipBrokenStation();
-      } else {
-        setPlaying(false);
-        setStreamStatus("UNAVAILABLE");
-        showNotice("This station is taking too long to respond");
-      }
-    }, 15000);
-    return () => window.clearTimeout(timeoutId);
-  }, [playing, streamStatus, active, settings.autoSkip, showNotice]);
 
   useEffect(() => {
     if (!station) return;
@@ -425,13 +424,6 @@ function App() {
                   <div className="station-backdrop" style={{ backgroundImage: `url("${station.favicon}")` }} />
                   <img className="station-logo" src={station.favicon} alt="" onError={e => { e.currentTarget.style.display = "none"; }} />
                 </>}
-                {playing && ["CONNECTING", "BUFFERING", "SKIPPING"].includes(streamStatus) && (
-                  <div className="stream-overlay" role="status" aria-live="polite">
-                    <span className="stream-loader"><LoaderCircle size={28} /></span>
-                    <strong>{streamStatus === "BUFFERING" ? "Buffering stream…" : streamStatus === "SKIPPING" ? "Finding another station…" : "Connecting to station…"}</strong>
-                    <span>Please wait a moment</span>
-                  </div>
-                )}
                 <div className="art-glow" />
                 <div className="art-ring ring-one" />
                 <div className="art-ring ring-two" />
