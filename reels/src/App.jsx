@@ -91,7 +91,8 @@ function App() {
   const audioRef = useRef(null);
   const touchStart = useRef(null);
   const skipLock = useRef(false);
-  const failedCount = useRef(0);
+  const failedStations = useRef(new Set());
+  const skipDirection = useRef(1);
   const noticeTimer = useRef(null);
 
   const station = stations[active] || null;
@@ -135,7 +136,6 @@ function App() {
       if (!list.length) throw new Error("No stations matched these filters. Try widening your discovery settings.");
       setStations(list);
       setActive(0);
-      failedCount.current = 0;
       skipLock.current = false;
       if (quiet) showNotice(`${list.length} stations loaded`);
     } catch (err) {
@@ -184,6 +184,8 @@ function App() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !station) return;
+    // A new station gets its own connection attempt; failures are tracked by station ID.
+    skipLock.current = false;
     if (audio.src !== station.streamUrl) {
       audio.src = station.streamUrl;
       audio.load();
@@ -224,28 +226,39 @@ function App() {
 
   function skipBrokenStation() {
     if (skipLock.current || !stations.length) return;
+
+    const failedStationId = stations[active]?.id;
+    if (failedStationId) failedStations.current.add(failedStationId);
     skipLock.current = true;
-    failedCount.current += 1;
-    if (failedCount.current >= stations.length) {
+
+    if (failedStations.current.size >= stations.length) {
       setPlaying(false);
       setStreamStatus("NO WORKING STATIONS");
       showNotice("No playable stations found in this list");
       skipLock.current = false;
-      failedCount.current = 0;
+      failedStations.current.clear();
       return;
     }
+
     setStreamStatus("SKIPPING");
-    setActive(current => (current + 1) % stations.length);
+    // Keep moving in the direction the listener chose: up = next, down = previous.
+    setActive(current => (current + skipDirection.current + stations.length) % stations.length);
   }
 
   function next() {
     if (!stations.length) return;
+    skipDirection.current = 1;
+    failedStations.current.clear();
+    skipLock.current = false;
     setActive(current => (current + 1) % stations.length);
     setShowInfo(false);
   }
 
   function previous() {
     if (!stations.length) return;
+    skipDirection.current = -1;
+    failedStations.current.clear();
+    skipLock.current = false;
     setActive(current => (current - 1 + stations.length) % stations.length);
     setShowInfo(false);
   }
@@ -457,7 +470,7 @@ function App() {
             <footer className="player-footer">
               <div className="now-playing"><div className="mini-disc"><Disc3 /></div><div><strong>{station.name}</strong><span>{playing ? "Streaming live" : "Ready to play"}</span></div></div>
               <div className="swipe-hint"><Headphones size={16} /> SWIPE TO EXPLORE</div>
-              <label className="volume-control"><Volume2 size={17} /><input aria-label="Volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))} /></label>
+              {!isMobileLayout && <label className="volume-control"><Volume2 size={17} /><input aria-label="Volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))} /></label>}
             </footer>
           </>}
 
@@ -552,7 +565,7 @@ function App() {
 
       <audio ref={audioRef} preload="none"
         onLoadStart={() => setStreamStatus("CONNECTING")}
-        onPlaying={() => { skipLock.current = false; failedCount.current = 0; setPlaying(true); setStreamStatus("ON AIR"); }}
+        onPlaying={() => { skipLock.current = false; failedStations.current.clear(); setPlaying(true); setStreamStatus("ON AIR"); }}
         onWaiting={() => setStreamStatus("BUFFERING")}
         onError={() => {
           console.warn("Audio stream failed:", station?.name);
