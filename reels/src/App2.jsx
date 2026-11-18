@@ -389,7 +389,24 @@ function App() {
                 if (Math.abs(diff) > 50) diff > 0 ? next() : previous();
                 touchStart.current = null;
               }}>
-              <div className="station-art" onDoubleClick={() => toggleFavorite()}>
+              <div
+                className="station-art"
+                onClick={(e) => {
+                  // Tapping the artwork toggles playback; dedicated controls keep their own actions.
+                  if (e.target.closest("button, a")) return;
+                  togglePlay();
+                }}
+                onDoubleClick={() => toggleFavorite()}
+                role="button"
+                tabIndex={0}
+                aria-label={playing ? "Pause station" : "Play station"}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    togglePlay();
+                  }
+                }}
+              >
                 {station.favicon && <>
                   <div className="station-backdrop" style={{ backgroundImage: `url("${station.favicon}")` }} />
                   <img className="station-logo" src={station.favicon} alt="" onError={e => { e.currentTarget.style.display = "none"; }} />
